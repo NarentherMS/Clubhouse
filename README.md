@@ -34,9 +34,9 @@ Use the admin account first the first time the app is run; this seeds the sample
 - Next-step status updates, overdue indicators, and upcoming meeting reminders inside the app.
 - Planned meeting creation, rescheduling, cancellation, and conversion into a completed interaction.
 - A combined overview and SVP activity digest, with upcoming meetings above the filters, date-range metrics, league/club/advisor/POC/capability/next-step status filters, and advisor/POC grouping.
-- Admin club assignment interface and regular-user scoping for assigned clubs and owned records.
-- The Admin workspace focuses on review and access management; regular users get the interaction logging actions.
+- Shared club access for all advisors and POCs, with ownership checks for editing interactions and meetings.
+- The Admin workspace provides a cross-team activity view and demo user roster; regular users can log interactions and meetings.
 
 ## Demo limitations
 
-The local server persists one workspace on this computer and enforces club-assignment and record-ownership rules for authenticated demo accounts. Demo passwords are intentionally included for evaluation and should be changed before any real deployment. The server binds to localhost; a production deployment needs account provisioning, password reset, a shared hosted database, secure session storage, and deployment-grade authorization. The local sample club directory should be refreshed if league membership changes.
+The local server persists one workspace on this computer. Every signed-in advisor and POC can view all clubs and club histories; record ownership controls who can edit interactions and planned meetings. Demo passwords are intentionally included for evaluation and should be changed before any real deployment. The server binds to localhost; a production deployment needs account provisioning, password reset, a shared hosted database, secure session storage, and deployment-grade authorization. The local sample club directory should be refreshed if league membership changes.

@@ -62,12 +62,10 @@ def visible_state(state, actor):
     if not person:
         raise ValueError("Unknown demo user")
     result["activeUser"] = actor
-    if person.get("role") == "Admin":
-        return result
-    club_ids = {c["id"] for c in state.get("clubs", []) if actor in c.get("assignments", [])}
-    result["clubs"] = [c for c in state.get("clubs", []) if c["id"] in club_ids]
-    result["interactions"] = [i for i in state.get("interactions", []) if i.get("clubId") in club_ids]
-    result["meetings"] = [m for m in state.get("meetings", []) if m.get("clubId") in club_ids]
+    # All signed-in users share the club directory and club history. Remove
+    # legacy assignment metadata so old demo data cannot imply restrictions.
+    for club in result.get("clubs", []):
+        club.pop("assignments", None)
     return result
 
 def same(a, b):
@@ -81,23 +79,23 @@ def validate_and_merge(old, incoming, actor):
     if person.get("role") == "Admin":
         merged = incoming
         merged["activeUser"] = actor
+        merged["clubs"] = [{k: v for k, v in club.items() if k != "assignments"} for club in incoming.get("clubs", [])]
         return merged
 
-    if not same(old.get("users", []), incoming.get("users", [])):
-        raise ValueError("Only an admin can manage users")
-    assignments = {c["id"]: c.get("assignments", []) for c in old.get("clubs", [])}
-    allowed = {club_id for club_id, owners in assignments.items() if actor in owners}
-    old_clubs = {c["id"]: c for c in old.get("clubs", [])}
+    club_ids = {c["id"] for c in old.get("clubs", [])}
     for club in incoming.get("clubs", []):
-        if club["id"] not in allowed or not same(club, old_clubs[club["id"]]):
-            raise ValueError("Only an admin can change club assignments")
+        if club["id"] not in club_ids:
+            raise ValueError("Unknown club")
+    if not same(incoming.get("users", []), old.get("users", [])):
+        raise ValueError("Only an admin can manage users")
 
     merged = json.loads(json.dumps(old))
+    merged["clubs"] = [{k: v for k, v in club.items() if k != "assignments"} for club in old.get("clubs", [])]
     old_interactions = {x["id"]: x for x in old.get("interactions", [])}
     merged_interactions = {x["id"]: x for x in old.get("interactions", [])}
     for item in incoming.get("interactions", []):
-        if item.get("clubId") not in allowed:
-            raise ValueError("You can only manage interactions for clubs assigned to you")
+        if item.get("clubId") not in club_ids:
+            raise ValueError("Unknown club")
         previous = old_interactions.get(item["id"])
         if previous is None:
             if item.get("owner") != actor:
@@ -127,8 +125,8 @@ def validate_and_merge(old, incoming, actor):
     old_meetings = {m["id"]: m for m in old.get("meetings", [])}
     merged_meetings = {m["id"]: m for m in old.get("meetings", [])}
     for item in incoming.get("meetings", []):
-        if item.get("clubId") not in allowed:
-            raise ValueError("You can only manage meetings for clubs assigned to you")
+        if item.get("clubId") not in club_ids:
+            raise ValueError("Unknown club")
         previous = old_meetings.get(item["id"])
         if previous is None:
             if item.get("owner") != actor:
