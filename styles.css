@@ -148,3 +148,86 @@
 /* Overview uses three balanced summary cards. */
 .stats-grid.overview-stat-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
 @media(max-width:720px){.stats-grid.overview-stat-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* EXL brand palette: orange accents with slate, midnight blue, and light blue. */
+:root{
+  --brand-orange:#FB4E0B;
+  --brand-slate:#2E3643;
+  --brand-midnight:#005071;
+  --brand-light-blue:#DCF3FA;
+  --ink:#25313D;
+  --muted:#687583;
+  --line:#D8E1E7;
+  --paper:#FFFFFF;
+  --canvas:#F5F8FA;
+  --green:#005071;
+  --green-dark:#003E58;
+  --mint:#EAF7FB;
+  --yellow:#FB4E0B;
+  --red:#B5473F;
+  --shadow:0 12px 38px rgba(38,54,68,.09);
+}
+body{background:var(--canvas);color:var(--ink)}
+.sidebar{background:var(--brand-midnight)}
+.brand-mark,.login-aside-mark{background:var(--brand-light-blue);color:var(--brand-midnight)}
+.brand-sub,.profile-role{color:#B8D4DF}
+.nav-label{color:#A8C8D5}
+.nav button{color:#E0EDF2}
+.nav button:hover{background:#176985;color:#fff}
+.nav button.active{background:var(--brand-light-blue);color:var(--brand-midnight)}
+.demo-badge{color:#C5DCE4}
+.demo-badge b{color:#fff}
+.role-select{background:#176985}
+.btn.primary{background:var(--brand-orange);border-color:var(--brand-orange);color:#26313B}
+.btn.primary:hover{background:#E34408;border-color:#E34408;color:#26313B}
+.btn.subtle{background:#EAF7FB;border-color:#B9DDE8;color:var(--brand-midnight)}
+.greeting{color:var(--brand-orange)}
+.link-btn,.action-link{color:var(--brand-midnight)}
+.club-tab.active{color:var(--brand-midnight);border-color:var(--brand-orange)}
+.club-tabs{background:#F4FAFC}
+.club-hero{background:linear-gradient(120deg,#F4FAFC,#E7F5F9)}
+.club-logo,.league-mark{background:#EAF7FB;color:var(--brand-midnight)}
+.stat-card{border-top-color:var(--brand-orange);background:linear-gradient(150deg,#fff,#FFF7F3)}
+.stat-card:nth-child(2){border-top-color:var(--brand-midnight);background:linear-gradient(150deg,#fff,#F3FAFC)}
+.stat-card:nth-child(3){border-top-color:#7795A5;background:linear-gradient(150deg,#fff,#F5F8FA)}
+.stat-card:nth-child(n+4){border-top-color:var(--brand-orange);background:linear-gradient(150deg,#fff,#FFF7F3)}
+.stat-card .stat-icon{background:#FFE9DF;color:#B43C0A}
+.stat-card:nth-child(2) .stat-icon{background:#EAF7FB;color:var(--brand-midnight)}
+.stat-card:nth-child(3) .stat-icon{background:#EDF1F4;color:var(--brand-slate)}
+.filter-panel-icon{background:#EAF7FB;color:var(--brand-midnight)}
+.filter-field{color:var(--brand-slate)}
+.filter-field .input,.filter-field .select{border-color:#B9DDE8}
+.overview-section-heading h2{color:var(--brand-slate)}
+.next-tag-0{color:#004967;background:#E6F5FA;border-color:#B9DDE8}
+.next-tag-1{color:#35414D;background:#EEF1F4;border-color:#D8E1E7}
+.next-tag-2,.next-tag-3{color:#A63708;background:#FFF0E8;border-color:#F8C9B5}
+.next-tag-4{color:#004967;background:#E6F5FA;border-color:#B9DDE8}
+.next-tag-5{color:#4F5B68;background:#EEF1F4;border-color:#D8E1E7}
+.digest-item:hover{background:linear-gradient(90deg,#F4FAFC,#fff)}
+.form-section:nth-child(1){border-color:#B9DDE8;background:#F4FAFC}
+.form-section:nth-child(2){border-color:#F8C9B5;background:#FFF8F4}
+.form-section:nth-child(3){border-color:#D8E1E7;background:#F8FAFB}
+.form-section:nth-child(4){border-color:#B9DDE8;background:#F4FAFC}
+.interaction-record{border-color:#C7D8E0;box-shadow:0 5px 16px rgba(0,80,113,.08)}
+.interaction-record:hover{box-shadow:0 9px 24px rgba(0,80,113,.13)}
+.interaction-record-head{background:linear-gradient(105deg,#2E3643,#005071)}
+.interaction-record-head .league-mark{background:var(--brand-light-blue);color:var(--brand-midnight)}
+.interaction-record-head .pill.blue{background:#E5F5FA;color:var(--brand-midnight)}
+.interaction-pocs{border-bottom-color:#D5E4EA;background:linear-gradient(90deg,#F4FAFC,#fff)}
+.poc-label{background:#EAF2F5;color:var(--brand-slate);border-color:#D5E1E6}
+.interaction-poc strong{color:var(--brand-slate)}
+.interaction-section-label{color:var(--brand-slate)}
+.section-icon{background:#EAF7FB;color:var(--brand-midnight)}
+.interaction-discussion p{color:#3D4A56}
+.interaction-next-panel{border-color:#F4B296;background:linear-gradient(145deg,#FFF4EE,#F4FAFC)}
+.interaction-next-head{border-bottom-color:#F3D5C8}
+.interaction-next-head h3{color:#A63708}
+.next-kicker{color:#BA4A1B}
+.overall-status>span{color:#6C7781}
+.next-action-row{border-bottom-color:#E6D8D1}
+.next-action-title{color:var(--brand-slate)}
+.next-action-meta{color:#65727E}
+.login-aside{background:radial-gradient(ellipse at 78% 18%,#176985 0,#005071 42%,#2E3643 100%)}
+.login-aside-mark{color:var(--brand-midnight)}
+.toast{background:var(--brand-slate)}
+@media(max-width:720px){.sidebar{background:var(--brand-midnight)}}
