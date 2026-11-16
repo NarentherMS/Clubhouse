@@ -62,6 +62,10 @@ def visible_state(state, actor):
     if not person:
         raise ValueError("Unknown demo user")
     result["activeUser"] = actor
+    # Contract information is private to its owner unless the signed-in user is an admin.
+    if person.get("role") != "Admin":
+        contracts = result.get("contracts", {})
+        result["contracts"] = {actor: contracts[actor]} if actor in contracts else {}
     # All signed-in users share the club directory and club history. Remove
     # legacy assignment metadata so old demo data cannot imply restrictions.
     for club in result.get("clubs", []):
