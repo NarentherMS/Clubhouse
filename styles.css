@@ -231,3 +231,29 @@ body{background:var(--canvas);color:var(--ink)}
 .login-aside-mark{color:var(--brand-midnight)}
 .toast{background:var(--brand-slate)}
 @media(max-width:720px){.sidebar{background:var(--brand-midnight)}}
+
+/* Club relationship overview: contacts and meeting timeline at a glance. */
+.club-overview{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;padding:16px 18px;background:#fff;border-bottom:1px solid var(--line)}
+.club-overview-card{min-width:0;border:1px solid #D8E1E7;border-radius:13px;background:linear-gradient(145deg,#fff,#F5FAFC);padding:14px}
+.club-overview-title{display:flex;align-items:center;gap:9px;margin-bottom:12px}
+.club-overview-title>div{display:grid;gap:3px;min-width:0}
+.club-overview-title strong{font:800 11px Manrope;color:var(--brand-slate)}
+.club-overview-title small{font-size:9px;color:var(--muted)}
+.club-overview-icon{width:31px;height:31px;display:grid;place-items:center;flex:none;border-radius:10px;background:var(--brand-midnight);color:#fff;font-size:8px;font-weight:800}
+.club-overview-icon.light{background:var(--brand-light-blue);color:var(--brand-midnight)}
+.club-overview-icon.orange{background:#FFF0E8;color:#B63C0A;font-size:16px}
+.club-contact-list{display:grid;gap:8px}
+.club-contact{display:flex;align-items:center;gap:8px;min-width:0}
+.club-contact-avatar{width:27px;height:27px;display:grid;place-items:center;flex:none;border-radius:9px;background:#EAF7FB;color:var(--brand-midnight);font-size:8px;font-weight:800}
+.club-contact>span:last-child{display:grid;gap:2px;min-width:0}
+.club-contact strong{font-size:10px;color:#26333F;overflow-wrap:anywhere}
+.club-contact small{font-size:9px;color:var(--muted);overflow-wrap:anywhere}
+.club-overview-empty{font-size:10px;color:var(--muted);line-height:1.5;padding:2px 0}
+.meeting-date-chips{display:flex;gap:6px;flex-wrap:wrap;max-height:95px;overflow:auto}
+.meeting-date-chips span{border:1px solid #B9DDE8;border-radius:8px;background:#EAF7FB;color:var(--brand-midnight);font-size:9px;font-weight:700;padding:6px 8px;white-space:nowrap}
+.next-meeting-card{border-color:#F3C4AF;background:linear-gradient(145deg,#FFF8F4,#fff)}
+.next-meeting-date{font:800 18px Manrope;color:#A63708;letter-spacing:-.4px}
+.next-meeting-caption{font-size:9px;color:#64717D;margin-top:5px;line-height:1.45;overflow-wrap:anywhere}
+.meeting-more{display:inline-flex;margin-top:8px;border-radius:20px;padding:4px 7px;background:#FDE7DC;color:#9D360A;font-size:8px;font-weight:800}
+@media(max-width:1050px){.club-overview{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:600px){.club-overview{grid-template-columns:1fr;padding:12px}.club-overview-card{padding:12px}.meeting-date-chips{max-height:120px}}
