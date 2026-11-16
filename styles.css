@@ -257,3 +257,37 @@ body{background:var(--canvas);color:var(--ink)}
 .meeting-more{display:inline-flex;margin-top:8px;border-radius:20px;padding:4px 7px;background:#FDE7DC;color:#9D360A;font-size:8px;font-weight:800}
 @media(max-width:1050px){.club-overview{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:600px){.club-overview{grid-template-columns:1fr;padding:12px}.club-overview-card{padding:12px}.meeting-date-chips{max-height:120px}}
+
+/* Club interaction history emphasizes the date and the two relationship sides. */
+.club-history-list{display:grid;gap:14px;padding:18px;background:#F4F8FA}
+.club-history-card{overflow:hidden;border:1px solid #BFCFD8;border-radius:14px;background:#fff;box-shadow:0 4px 14px rgba(37,55,69,.06)}
+.club-history-head{display:flex;align-items:center;gap:12px;padding:12px 16px;background:linear-gradient(105deg,#E9F4F8,#F8FAFB);border-bottom:1px solid #D3E0E6}
+.club-history-calendar{width:36px;height:36px;display:grid;place-items:center;flex:none;border-radius:10px;background:#005071;color:#fff;font-size:17px}
+.club-history-date{display:grid;gap:2px;min-width:0}
+.club-history-date small,.contact-kicker{font-size:8px;letter-spacing:.8px;color:#5D6A75;font-weight:800}
+.club-history-date strong{font:800 16px Manrope;color:#2E3643}
+.club-history-head>.pill{margin-left:auto}
+.club-history-status{margin-left:auto}
+.club-history-status .next-step-tag{font-size:9px}
+.club-history-contacts{display:grid;grid-template-columns:minmax(190px,.62fr) minmax(0,1.38fr);gap:14px;padding:13px 16px;border-bottom:1px solid #E2E8EC}
+.club-history-contact{display:grid;align-content:start;gap:6px;min-width:0}
+.club-history-contact+.club-history-contact{border-left:1px solid #D8E1E7;padding-left:14px}
+.club-history-contact>strong{font-size:13px;font-weight:800;color:#005071;overflow-wrap:anywhere}
+.stakeholder-name-list{display:flex;flex-wrap:wrap;gap:7px}
+.stakeholder-name{display:grid;gap:2px;border:1px solid #C8DFE8;background:#F3FAFC;border-radius:9px;padding:6px 9px;min-width:120px}
+.stakeholder-name strong{font-size:11px;color:#2E3643}
+.stakeholder-name small{font-size:9px;color:#66737F}
+.contact-missing{font-size:10px;color:#78848E}
+.club-history-summary{padding:13px 16px 14px}
+.club-history-label{font:800 11px Manrope;color:#2E3643}
+.club-history-summary p{font-size:11px;color:#3F4B56;line-height:1.6;margin:6px 0 0}
+.club-history-summary .solution-label{margin-top:12px}
+.club-history-summary .cap-list{margin-top:7px}
+.club-history-next{padding:11px 16px 13px;border-top:1px solid #D8E1E7;background:#F7FAFB}
+.club-history-step-list{display:grid;margin-top:4px}
+.club-history-step{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:8px 0;border-top:1px solid #E5EBEE}
+.club-history-step>div{display:grid;gap:3px;min-width:0}
+.club-history-step strong{font-size:10px;color:#2E3643;line-height:1.45}
+.club-history-step small{font-size:9px;color:#697682}
+.club-history-step>.pill{flex:none}
+@media(max-width:650px){.club-history-list{padding:11px}.club-history-contacts{grid-template-columns:1fr;gap:10px}.club-history-contact+.club-history-contact{border-left:0;border-top:1px solid #D8E1E7;padding:10px 0 0}.club-history-head{padding:10px 12px;gap:8px}.club-history-date strong{font-size:14px}.club-history-contacts,.club-history-summary,.club-history-next{padding-left:12px;padding-right:12px}}
