@@ -10,11 +10,25 @@ This project has no build step or third-party runtime dependencies. Python serve
 python3 server.py
 ```
 
-Then open [http://localhost:4173](http://localhost:4173). The app persists to `clubhouse.sqlite3` (ignored by Git) and keeps a browser-local copy as a fallback. Sign in with any of the demo accounts below to evaluate the Admin and regular-user views. Initial activity is marked **Sample**.
+Then open [http://localhost:4173](http://localhost:4173). The app persists to `clubhouse.sqlite3` (ignored by Git) and keeps a browser-local copy as a fallback. Sign in with one of the local access accounts below. The workspace starts with the club directory and no interactions or meetings; teams add their real activity as it happens.
 
-## Demo sign-in accounts
+## Run in a container
 
-Sign in with a username and password. The sign-in screen also has buttons that fill these demo credentials for you:
+Docker is an optional portable run path. From the project folder:
+
+```sh
+docker compose up --build
+```
+
+Then open [http://localhost:4173](http://localhost:4173). The named `clubhouse_data` volume keeps the SQLite workspace between container restarts. Stop with `Ctrl+C`; use `docker compose down` to stop and remove the container. Keep the named volume to retain saved workspace data.
+
+## Shared hosting notes
+
+The server can run behind a TLS-terminating reverse proxy. Configure `CLUBHOUSE_HOST=0.0.0.0`, `CLUBHOUSE_PORT`, and `CLUBHOUSE_DB_PATH` for the host environment, mount durable storage at the database path, and set `CLUBHOUSE_COOKIE_SECURE=1` when HTTPS is enabled. The container listens on port 4173 and includes a `/healthz` endpoint. Do not use an ephemeral filesystem for the SQLite database. For larger deployments, replace the local SQLite store with a managed relational database and connect a managed identity provider.
+
+## Local sign-in accounts
+
+Enter a username and password to sign in to the local workspace:
 
 | Access | Username | Password |
 | --- | --- | --- |
@@ -23,7 +37,7 @@ Sign in with a username and password. The sign-in screen also has buttons that f
 | Advisor | `jamie` | `JamieClub26!` |
 | Internal POC | `taylor` | `TaylorClub26!` |
 
-Use the admin account first the first time the app is run; this seeds the sample workspace.
+Use the admin account first the first time the app is run; this initializes the workspace.
 
 ## Included
 
@@ -35,8 +49,16 @@ Use the admin account first the first time the app is run; this seeds the sample
 - Planned meeting creation, rescheduling, cancellation, and conversion into a completed interaction.
 - A combined overview and SVP activity digest, with upcoming meetings above the filters, date-range metrics, league/club/advisor/POC/capability/next-step status filters, and advisor/POC grouping.
 - Shared club access for all advisors and POCs, with ownership checks for editing interactions and meetings.
-- The Admin workspace provides a cross-team activity view and demo user roster; regular users can log interactions and meetings.
+- The Admin workspace provides a cross-team activity view and workspace user roles; regular users can log interactions and meetings.
 
-## Demo limitations
+## Deployment notes
 
-The local server persists one workspace on this computer. Every signed-in advisor and POC can view all clubs and club histories; record ownership controls who can edit interactions and planned meetings. Demo passwords are intentionally included for evaluation and should be changed before any real deployment. The server binds to localhost; a production deployment needs account provisioning, password reset, a shared hosted database, secure session storage, and deployment-grade authorization. The local sample club directory should be refreshed if league membership changes.
+The local server persists one shared workspace in SQLite. Every signed-in advisor and POC can view all clubs and club histories; record ownership controls who can edit interactions and planned meetings. Sessions are stored server-side with idle and absolute expirations, and state updates are committed transactionally. The included sign-ins are local evaluation accounts. A real deployment still needs HTTPS termination, account provisioning and recovery, a hosted durable database plan, and scheduled off-host backups. Refresh the club directory when league membership changes.
+
+Create an operator-initiated database snapshot with:
+
+```sh
+python3 backup.py
+```
+
+Snapshots are written to `backups/` beside the database by default (or to `CLUBHOUSE_BACKUP_DIR` if set) and are ignored by Git. Store copies off the machine for recovery. To restore, stop the server, preserve the current database file, copy the chosen snapshot to the configured database path, and restart. For Docker, run `docker compose exec clubhouse python backup.py`; snapshots are stored in the mounted `/data/backups` folder.
