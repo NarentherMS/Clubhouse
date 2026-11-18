@@ -164,7 +164,7 @@ def validate_state_shape(state):
     if not users or None in users or None in clubs:
         raise ValueError("Workspace users and clubs need identifiers")
     for user in state["users"]:
-        if user.get("role") not in {"Admin", "User"}:
+        if user.get("role") not in {"Admin", "Sub-admin", "User"}:
             raise ValueError("Invalid workspace role")
     def valid_date(value, required=True):
         if not value and not required:
@@ -179,6 +179,10 @@ def validate_state_shape(state):
             raise ValueError("Interaction references an unknown club or user")
         if not valid_date(item.get("date")) or not isinstance(item.get("summary", ""), str) or len(item.get("summary", "")) > 12000:
             raise ValueError("Interaction date or summary is invalid")
+        if item.get("nextStepType") == "Other":
+            detail = item.get("nextStepDetail")
+            if not isinstance(detail, str) or not detail.strip() or len(detail) > 300:
+                raise ValueError("Describe the Other next step in 300 characters or fewer")
         for follow in item.get("followups", []):
             if not isinstance(follow, dict) or follow.get("status") not in {"Open", "Done", "Canceled"}:
                 raise ValueError("Invalid next step")
@@ -189,6 +193,9 @@ def validate_state_shape(state):
             raise ValueError("Meeting references an unknown club or user")
         if meeting.get("status") not in {"Planned", "Completed", "Canceled"} or not valid_date(meeting.get("date")):
             raise ValueError("Meeting date or status is invalid")
+        capabilities = meeting.get("capabilities", [])
+        if not isinstance(capabilities, list) or any(name not in ROADMAP_CAPABILITIES for name in capabilities):
+            raise ValueError("Select valid planned meeting capabilities")
         if meeting.get("time") and not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", meeting["time"]):
             raise ValueError("Meeting time is invalid")
     if not isinstance(state.get("contracts", {}), dict):
@@ -218,7 +225,7 @@ def visible_state(state, actor):
         raise ValueError("Unknown workspace user")
     result["activeUser"] = actor
     # Contract information is private to its owner unless the signed-in user is an admin.
-    if person.get("role") != "Admin":
+    if person.get("role") == "User":
         # Keep the main activity payload private to its creator. Next steps
         # assigned to this user are provided separately without meeting notes.
         all_interactions = result.get("interactions", [])
@@ -254,7 +261,9 @@ def update_followup_status(interaction_id, followup_id, status, actor):
         followup = next((f for f in (interaction or {}).get("followups", []) if f.get("id") == followup_id), None)
         if not person or not interaction or not followup:
             raise ValueError("Next step not found")
-        if person.get("role") != "Admin" and followup.get("owner") != actor and interaction.get("owner") != actor:
+        if person.get("role") != "User":
+            raise ValueError("Staff have read-only access to next steps")
+        if followup.get("owner") != actor and interaction.get("owner") != actor:
             raise ValueError("You can only update your own next steps")
         followup["status"] = status
         conn.execute("UPDATE app_state SET payload=? WHERE id=1", (json.dumps(state),))
@@ -267,8 +276,15 @@ def validate_and_merge(old, incoming, actor):
     person = users.get(actor)
     if not person:
         raise ValueError("Unknown workspace user")
+    if person.get("role") == "Sub-admin":
+        raise ValueError("Sub-admins have read-only access to workspace records")
     if person.get("role") == "Admin":
-        merged = incoming
+        merged = dict(incoming)
+        merged["users"] = old["users"]
+        # An admin may save contract or workspace changes from a stale view.
+        # Always retain the activity currently in the database.
+        merged["interactions"] = old.get("interactions", [])
+        merged["meetings"] = old.get("meetings", [])
         merged["activeUser"] = actor
         merged["clubs"] = [{k: v for k, v in club.items() if k != "assignments"} for club in incoming.get("clubs", [])]
         return merged
@@ -277,8 +293,6 @@ def validate_and_merge(old, incoming, actor):
     for club in incoming.get("clubs", []):
         if club["id"] not in club_ids:
             raise ValueError("Unknown club")
-    if not same(incoming.get("users", []), old.get("users", [])):
-        raise ValueError("Only an admin can manage users")
 
     merged = json.loads(json.dumps(old))
     merged["clubs"] = [{k: v for k, v in club.items() if k != "assignments"} for club in old.get("clubs", [])]
@@ -338,7 +352,203 @@ def validate_and_merge(old, incoming, actor):
     merged["activeUser"] = actor
     return merged
 
+def time_expense_records(actor, data=None):
+    with connect() as conn:
+        if data is not None:
+            conn.execute("BEGIN IMMEDIATE")
+        conn.execute("""CREATE TABLE IF NOT EXISTS time_expenses (
+            id TEXT PRIMARY KEY, owner TEXT NOT NULL, kind TEXT NOT NULL,
+            entry_date TEXT NOT NULL, status TEXT NOT NULL, detail TEXT NOT NULL,
+            note TEXT NOT NULL DEFAULT '', revision INTEGER NOT NULL DEFAULT 1
+        )""")
+        conn.execute("""CREATE UNIQUE INDEX IF NOT EXISTS one_timesheet_per_day
+            ON time_expenses(owner, entry_date) WHERE kind = 'time'""")
+        row = conn.execute("SELECT payload FROM app_state WHERE id=1").fetchone()
+        users = {u["id"]: u for u in json.loads(row[0]).get("users", [])} if row else {}
+        if actor not in users:
+            raise ValueError("Workspace account is unavailable")
+        role = users[actor]["role"]
+        admin = role == "Admin"
+        conn.row_factory = sqlite3.Row
+        if data is None:
+            scope, params = ("status != 'Draft'", ()) if role != "User" else ("owner = ?", (actor,))
+            rows = conn.execute(f"SELECT * FROM time_expenses WHERE {scope} ORDER BY entry_date DESC, id", params)
+            return [{**dict(item), "detail": json.loads(item["detail"]), "advisor": users.get(item["owner"], {}).get("name", item["owner"])} for item in rows]
+
+        if role == "Sub-admin":
+            raise ValueError("Only Admin can approve or return submissions")
+        action = data.get("action")
+        entry_id = data.get("id")
+        current = conn.execute("SELECT * FROM time_expenses WHERE id = ?", (entry_id,)).fetchone() if entry_id else None
+        if entry_id and not current:
+            raise ValueError("Entry no longer exists")
+        if current and data.get("revision") != current["revision"]:
+            raise ValueError("This entry changed. Reload the list and try again.")
+        if admin:
+            if action not in {"approve", "return"} or not current or current["status"] != "Submitted":
+                raise ValueError("Only submitted entries can be reviewed")
+            note = time_expense_text(data, "note", "Return note", 1000) if action == "return" else ""
+            status = "Approved" if action == "approve" else "Returned"
+            conn.execute("UPDATE time_expenses SET status=?, note=?, revision=revision+1 WHERE id=?", (status, note, entry_id))
+            return
+
+        if action not in {"draft", "submit"} or (current and (current["owner"] != actor or current["status"] not in {"Draft", "Returned"})):
+            raise ValueError("Only your drafts and returned entries can be edited")
+        kind = data.get("kind")
+        if kind not in {"time", "travel"} or (current and kind != current["kind"]):
+            raise ValueError("Invalid entry type")
+        entry_date = calendar_date.fromisoformat(time_expense_text(data, "date", "Date", 10)).isoformat()
+        if kind == "time":
+            detail = {"deliverables": time_expense_text(data, "deliverables", "Deliverables", 2000),
+                      "hours": time_expense_number(data, "hours", "Duration", 24)}
+        else:
+            detail = {"origin": time_expense_text(data, "origin", "Travel from", 250),
+                      "destination": time_expense_text(data, "destination", "Travel to", 250),
+                      "reason": time_expense_text(data, "reason", "Reason for travel", 2000),
+                      "cost": time_expense_number(data, "cost", "Total cost", 999999999)}
+        status = "Submitted" if action == "submit" else current["status"] if current else "Draft"
+        try:
+            if current:
+                conn.execute("UPDATE time_expenses SET entry_date=?, status=?, detail=?, revision=revision+1 WHERE id=?",
+                             (entry_date, status, json.dumps(detail), entry_id))
+            else:
+                conn.execute("INSERT INTO time_expenses(id, owner, kind, entry_date, status, detail) VALUES(?,?,?,?,?,?)",
+                             (secrets.token_hex(16), actor, kind, entry_date, status, json.dumps(detail)))
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("You already have a timesheet for this date. Open that entry to edit it.") from exc
+
+
+def time_expense_text(data, field, label, limit):
+    value = data.get(field)
+    if not isinstance(value, str) or not value.strip() or len(value.strip()) > limit:
+        raise ValueError(f"Enter {label.lower()} in {limit} characters or fewer")
+    return value.strip()
+
+
+def time_expense_number(data, field, label, maximum):
+    value = data.get(field)
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9]{1,9}(?:\.[0-9]{1,2})?", value) or not 0 < float(value) <= maximum:
+        raise ValueError(f"{label} must be greater than zero and at most {maximum}, with up to two decimals")
+    return value
+
+
+# Initial development notes transcribed from the supplied tracker.
+ROADMAP_STARTERS = {
+    "Collections Accelerator": ("P1", "Demo", "Daniil", "Karan Sood's team",
+        "Configure the servicing demo for the Rams.", "Discuss funding for a dedicated team and sandbox.", "Los Angeles Rams"),
+    "Ticket Sales Accelerator": ("P2", "Demo", "Vibhor / Ashutosh", "IMU",
+        "The initial framework is ready.", "Create the development plan.", ""),
+    "Marketing in a Box": ("P3", "MVP", "Ashutosh's team", "Ashutosh's team",
+        "The core features are in place. Closed-loop measurement is still in progress.", "Complete measurement and prepare for the first client rollout.", ""),
+    "Finance in a Box": ("P4", "Demo", "Kalpesh", "",
+        "The demo is ready. Integration is underway and FP&A is in development.", "Work with Rob on prospect discussions.", ""),
+    "Search & Retrieval": ("P5", "MVP", "Deepak", "Robin's team",
+        "Implementation is underway in the AVFC environment.", "Plan the rollout at scale and define the inputs and visuals.", "Aston Villa FC (AVFC)"),
+    "Smart Stadium": ("P6", "Deck", "Don Whitt", "",
+        "The initial point of view is ready.", "Prepare the proposal deck.", ""),
+}
+ROADMAP_CAPABILITIES = tuple(ROADMAP_STARTERS)
+
+
+def roadmap_starter(name):
+    priority, stage, owner, team, summary, next_steps, proposed = ROADMAP_STARTERS[name]
+    return {"priority": priority, "stage": stage, "owner": owner, "team": team,
+            "proposedAnchorClients": proposed,
+            "proposedAdvisors": "Rob" if name == "Finance in a Box" else "",
+            "updates": [{"stage": stage, "summary": summary, "nextSteps": next_steps,
+                         "author": "Tracker reference"}]}
+
+
+ROADMAP_STAGES = ("Deck", "Demo", "MVP", "Product")
+
+
+def roadmap_records(actor, data=None):
+    with connect() as conn:
+        if data is not None:
+            conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT payload FROM app_state WHERE id=1").fetchone()
+        workspace = json.loads(row[0]) if row else {}
+        users = {user["id"]: user for user in workspace.get("users", [])}
+        role = users.get(actor, {}).get("role")
+        if role not in {"Admin", "Sub-admin"} or (data is not None and role != "Sub-admin"):
+            raise PermissionError("Only Sub-admin can update the roadmap" if data is not None else "Roadmap access is restricted to staff")
+        conn.execute("CREATE TABLE IF NOT EXISTS roadmap (capability TEXT PRIMARY KEY, payload TEXT NOT NULL)")
+        records = {name: json.loads(payload) for name, payload in conn.execute("SELECT capability, payload FROM roadmap")}
+        if data is None:
+            return [{"name": name, **records.get(name, roadmap_starter(name))} for name in ROADMAP_CAPABILITIES]
+        name = data.get("name")
+        if name not in ROADMAP_CAPABILITIES:
+            raise ValueError("Unknown capability")
+        previous = records.get(name, roadmap_starter(name))
+        if data.get("revision") != previous.get("revision", 0):
+            raise ValueError("This roadmap changed. Reload it and try again.")
+
+        def field(key, limit=300):
+            value = data.get(key, "")
+            if not isinstance(value, str) or len(value.strip()) > limit:
+                raise ValueError(f"Invalid {key}")
+            return value.strip()
+
+        priority = field("priority")
+        if priority and not re.fullmatch(r"P[1-9][0-9]?", priority):
+            raise ValueError("Use a priority such as P1 or P2")
+        stage = field("stage")
+        if stage not in ROADMAP_STAGES:
+            raise ValueError("Select a development stage")
+        clients = field("anchorClients", 2000)
+        updates = previous.get("updates", [])
+        summary = field("summary", 4000)
+        next_steps = field("nextSteps", 2000)
+        due = field("nextStepsDue", 10)
+        if bool(next_steps) != bool(due):
+            raise ValueError("Enter both the next steps and their deadline")
+        if due:
+            due = calendar_date.fromisoformat(due).isoformat()
+        if summary:
+            date = calendar_date.fromisoformat(field("date")).isoformat()
+            updates = [{"date": date, "stage": stage, "summary": summary,
+                                 "blockers": field("blockers", 2000), "nextSteps": next_steps, "nextStepsDue": due,
+                                 "author": users[actor]["name"]}, *updates]
+            updates.sort(key=lambda update: update.get("date", ""), reverse=True)
+        elif any(field(key, 2000) for key in ("blockers", "nextSteps")):
+            raise ValueError("Add a development update before recording blockers or next steps")
+        record = {"priority": priority, "stage": stage, "owner": field("owner"), "team": field("team"),
+                  "advisors": field("advisors", 1000), "anchorClients": clients,
+                  "proposedAnchorClients": field("proposedAnchorClients", 2000),
+                  "proposedAdvisors": field("proposedAdvisors", 1000),
+                  "updates": updates, "revision": previous.get("revision", 0) + 1}
+        conn.execute("INSERT INTO roadmap VALUES(?,?) ON CONFLICT(capability) DO UPDATE SET payload=excluded.payload",
+                     (name, json.dumps(record)))
+
+
+def add_subadmin(username, name, password):
+    if not re.fullmatch(r"[a-z0-9._-]{3,60}", username) or not name or len(name) > 100:
+        raise ValueError("Enter a valid username and display name")
+    if len(password) < 12:
+        raise ValueError("Use a password of at least 12 characters")
+    actor = "u-subadmin-" + secrets.token_hex(8)
+    salt = secrets.token_hex(16)
+    hashed = password_hash(password, salt)
+    with connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT payload FROM app_state WHERE id=1").fetchone()
+        if not row:
+            raise ValueError("Sign in as Admin once to initialize the workspace")
+        if conn.execute("SELECT 1 FROM accounts WHERE username=?", (username,)).fetchone():
+            raise ValueError("That username is already in use")
+        state = json.loads(row[0])
+        state["users"].append({"id": actor, "name": name, "role": "Sub-admin", "title": "Sub-admin"})
+        conn.execute("INSERT INTO accounts VALUES(?,?,?,?)", (username, actor, salt, hashed))
+        conn.execute("UPDATE app_state SET payload=? WHERE id=1", (json.dumps(state),))
+
+
 class Handler(SimpleHTTPRequestHandler):
+    def send_head(self):
+        if urlparse(self.path).path not in {"/", "/index.html", "/app.js", "/styles.css"}:
+            self.send_error(404)
+            return None
+        return super().send_head()
+
     def __init__(self, *args, **kwargs):
         ensure_accounts()
         super().__init__(*args, directory=str(ROOT), **kwargs)
@@ -385,8 +595,36 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def handle_time_expenses(self, write=False):
+        actor = session_actor(self)
+        if not actor:
+            return self.send_json(401, {"error": "Sign in to continue"})
+        try:
+            result = time_expense_records(actor, self.read_json(12000) if write else None)
+            return self.send_json(200, {"ok": True} if write else {"entries": result})
+        except RequestTooLarge as exc:
+            return self.send_json(413, {"error": str(exc)})
+        except (ValueError, TypeError, sqlite3.InterfaceError, sqlite3.ProgrammingError) as exc:
+            return self.send_json(400, {"error": str(exc)})
+
+    def handle_roadmap(self, write=False):
+        actor = session_actor(self)
+        if not actor:
+            return self.send_json(401, {"error": "Sign in to continue"})
+        try:
+            result = roadmap_records(actor, self.read_json(20000) if write else None)
+            return self.send_json(200, {"ok": True} if write else {"products": result})
+        except PermissionError as exc:
+            return self.send_json(403, {"error": str(exc)})
+        except (ValueError, TypeError, RequestTooLarge) as exc:
+            return self.send_json(400, {"error": str(exc)})
+
     def do_GET(self):
         url = urlparse(self.path)
+        if url.path == "/api/roadmap":
+            return self.handle_roadmap()
+        if url.path == "/api/time-expenses":
+            return self.handle_time_expenses()
         if url.path == "/healthz":
             return self.send_json(200, {"ok": True})
         if url.path == "/api/session":
@@ -412,6 +650,10 @@ class Handler(SimpleHTTPRequestHandler):
         path = urlparse(self.path).path
         if not self.same_origin_request():
             return self.send_json(403, {"error": "Cross-origin request rejected"})
+        if path == "/api/roadmap":
+            return self.handle_roadmap(write=True)
+        if path == "/api/time-expenses":
+            return self.handle_time_expenses(write=True)
         if path == "/api/login":
             remote = self.client_address[0]
             if login_is_limited(remote):
@@ -473,6 +715,20 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_json(403, {"error": str(exc)})
 
 if __name__ == "__main__":
+    import sys
+    if sys.argv[1:] == ["add-subadmin"]:
+        from getpass import getpass
+        try:
+            username = input("Sub-admin username: ").strip().lower()
+            name = input("Display name: ").strip()
+            password = getpass("Password: ")
+            if password != getpass("Confirm password: "):
+                raise ValueError("Passwords do not match")
+            add_subadmin(username, name, password)
+        except ValueError as exc:
+            raise SystemExit(str(exc))
+        raise SystemExit("Sub-admin created.")
+
     host = os.environ.get("CLUBHOUSE_HOST", "127.0.0.1")
     port = int(os.environ.get("CLUBHOUSE_PORT", "4173"))
     os.umask(0o077)
