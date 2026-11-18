@@ -1,0 +1,21 @@
+services:
+  clubhouse:
+    build: .
+    ports:
+      - "${CLUBHOUSE_PORT:-4173}:4173"
+    environment:
+      CLUBHOUSE_HOST: 0.0.0.0
+      CLUBHOUSE_PORT: 4173
+      CLUBHOUSE_DB_PATH: /data/clubhouse.sqlite3
+      CLUBHOUSE_COOKIE_SECURE: ${CLUBHOUSE_COOKIE_SECURE:-0}
+    volumes:
+      - clubhouse_data:/data
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  clubhouse_data:
