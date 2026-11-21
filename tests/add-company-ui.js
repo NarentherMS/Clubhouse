@@ -1,0 +1,37 @@
+// VM harness: load app.js without init(); supply strict assert and a minimal document.
+(async()=>{
+ db={activeUser:'admin',users:[{id:'admin',name:'Admin',role:'Admin'},{id:'sub',name:'Sub Admin',role:'Sub-admin'},{id:'avery',name:'Avery',role:'User'}],clubs:[{id:'cowboys',name:'Dallas Cowboys',league:'NFL'},{id:'pending',name:'Pending selection',league:'Other'}],interactions:[],meetings:[],contracts:{},companyAccess:{avery:{mode:'selected',companyIds:['cowboys'],revision:3}}};
+ selectedCompanyAdvisor='avery';
+ assert(adminPage().includes('Add New Company'));
+ const accessHtml=companyAccessEditor(db.users.filter(person=>person.role==='User'));
+ assert(accessHtml.indexOf('id="access-add-company"')>accessHtml.indexOf('id="access-clear"'));
+ assert(accessHtml.indexOf('id="access-add-company"')>accessHtml.indexOf('id="access-company-picker"'));
+ assert(accessHtml.includes('form="access-new-company"'));
+ assert(adminPage().includes('id="access-new-company"'));
+ db.activeUser='sub';assert(!adminPage().includes('access-add-company'));db.activeUser='admin';
+ const controls=[{disabled:false},{disabled:false}],error={textContent:''};let focused=false,expanded='false';
+ const create={elements:{companyName:{value:'  New Company  ',focus(){focused=true}}},querySelector:()=>error,querySelectorAll:()=>controls};
+ const panel={hidden:true,querySelector:()=>error,querySelectorAll:()=>controls};
+ const toggle={setAttribute(name,value){expanded=value},focus(){}};
+ const access={elements:{accessMode:{value:'selected'}},querySelectorAll:selector=>selector.includes(':checked')?[{value:'cowboys'},{value:'pending'}]:controls};
+ const count={value:0},radio={checked:false,onchange(){count.value++}};
+ const freshBoxes=['cowboys','pending','new-id'].map(value=>({value,checked:false,onchange(){count.value++}}));
+ const freshAccess={querySelector:selector=>selector.includes('accessMode')?radio:freshBoxes[0],querySelectorAll:()=>freshBoxes};
+ const nodes={'#access-new-company':create,'#access-new-company-panel':panel,'#access-add-company':toggle,'#access-new-company-cancel':{},'#access-advisor':{value:'avery'},'#company-access-form':access};
+ document.querySelector=selector=>nodes[selector]||null;
+ let posted,postedUrl;
+ const stored=JSON.parse(JSON.stringify(db));stored.clubs.push({id:'new-id',name:'New Company',league:'Other'});stored.companyAccess.avery={mode:'selected',companyIds:['cowboys','new-id'],revision:4};
+ fetch=async(url,options)=>{postedUrl=url;posted=JSON.parse(options.body);return {ok:true,json:async()=>({state:stored,company:stored.clubs[2]})}};
+ app=()=>{nodes['#company-access-form']=freshAccess};toast=()=>{};page='admin';
+ bindAddCompany(access);toggle.onclick();assert(!panel.hidden&&focused);assert.equal(expanded,'true');
+ nodes['#access-new-company-cancel'].onclick();assert(panel.hidden);assert.equal(expanded,'false');
+ toggle.onclick();await create.onsubmit({preventDefault(){}});
+ assert.equal(postedUrl,'/api/companies');assert.equal(posted.name,'New Company');assert.equal(posted.advisorId,'avery');assert.equal(posted.revision,3);
+ assert(db.clubs.some(company=>company.id==='new-id'&&company.league==='Other'));
+ assert.deepEqual(db.companyAccess.avery.companyIds,['cowboys','new-id']);
+ assert(freshBoxes.every(input=>input.checked));assert(radio.checked);assert.equal(count.value,2);
+ assert(controls.every(input=>!input.disabled));assert.equal(error.textContent,'');
+ fetch=async()=>({ok:false,json:async()=>({error:'This company already exists'})});
+ await create.onsubmit({preventDefault(){}});assert.equal(error.textContent,'This company already exists');assert(controls.every(input=>!input.disabled));
+ console.log('Add company UI checks passed: Admin-only controls, open/cancel, correct advisor and revision, saved Other record, preserved pending selections, error feedback.');
+})();

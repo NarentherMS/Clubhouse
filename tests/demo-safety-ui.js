@@ -1,0 +1,55 @@
+// Run after app.js (without init) in a VM with strict assert, structuredClone and a minimal document.
+(async()=>{
+ const makeState=()=>{
+  const state=freshDB();state.activeUser='u-avery';
+  state.meetings=[{id:'test-meeting',owner:'u-avery',clubId:state.clubs[0].id,date:dt(2),status:'Planned',interactionId:'source'}];
+  state.interactions=[{id:'source',owner:'u-avery',clubId:state.clubs[0].id,date:dt(),summary:'Earlier notes',nextStepType:'Meeting scheduled',meetingId:'test-meeting',nextMeeting:dt(2),nextAgenda:'Review deck',followups:[{id:'action',owner:'u-avery',description:'Send deck',due:dt(1),status:'Open'}]}];
+  state.contracts={'u-avery':{hourlyRate:40,monthlyCap:80}};
+  state.recordVersions={interactions:{source:'original-version'},meetings:{'test-meeting':'original-meeting'},contracts:{'u-avery':'original-contract'}};
+  return state;
+ };
+ assert.equal(localStorage.getItem(STORE),null,'Legacy persisted workspace must be removed on load');
+ let messages=[];toast=message=>messages.push(message);renderPage=()=>{};confirm=()=>true;
+ db=makeState();const before=structuredClone(db);fetch=()=>Promise.reject(new Error('Server unavailable'));
+ await cancelMeeting('test-meeting');
+ assert.equal(db.meetings[0].status,'Planned');assert.equal(db.interactions[0].nextMeeting,before.interactions[0].nextMeeting);
+ assert(!messages.includes('Meeting canceled'));assert(messages.includes('Server unavailable'));
+ messages=[];db=makeState();fetch=async()=>({ok:false,status:403,json:async()=>({error:'Company access changed'})});
+ await cancelMeeting('test-meeting');assert.equal(db.meetings[0].status,'Planned');assert(!messages.includes('Meeting canceled'));
+ messages=[];db=makeState();let completeSave,submitted,requests=0;
+ fetch=(url,options)=>{submitted=JSON.parse(options.body).state;requests++;return new Promise(resolve=>{completeSave=resolve})};
+ const pendingCancel=cancelMeeting('test-meeting');assert(!messages.includes('Meeting canceled'));
+ await cancelMeeting('test-meeting');assert.equal(requests,1,'Repeated clicks must not send duplicate cancellations');
+ submitted.recordVersions.meetings['test-meeting']='confirmed-version';
+ completeSave({ok:true,status:200,json:async()=>({ok:true,state:submitted})});await pendingCancel;
+ assert.equal(db.meetings[0].status,'Canceled');assert(messages.includes('Meeting canceled'));assert.equal(db.recordVersions.meetings['test-meeting'],'confirmed-version');
+ db=makeState();const previous=structuredClone(db);db.interactions[0].summary='Unsaved edits';
+ const submit={disabled:false},children=[];
+ const form={querySelector:selector=>selector==='[data-save-error]'?null:submit,append:node=>children.push(node)};
+ fetch=async()=>({ok:false,status:409,json:async()=>({error:'This interaction changed in another session. Copy your edits, then reload.'})});
+ assert.equal(await persistInteractionChanges(form,previous),false);assert(!submit.disabled);
+ assert.equal(db.interactions[0].summary,'Earlier notes');assert(children[0].textContent.includes('Copy your edits'));
+ assert(children[0].children.some(node=>node.textContent==='Reload latest data'));
+ db=makeState();db.meetings.push({...db.meetings[0],id:'another-meeting',time:null});
+ calendarMonth=new Date(new Date().getFullYear(),new Date().getMonth(),1);selectedCalendarDate=dt(2);
+ assert.doesNotThrow(()=>calendarMarkup());assert(calendarMarkup().includes('Time not set'));
+ db=makeState();fetch=async()=>({ok:true,json:async()=>({ok:true,interactionVersion:'new-followup-version'})});
+ await changeFollowup('action','Done');assert.equal(db.interactions[0].followups[0].status,'Done');assert.equal(db.recordVersions.interactions.source,'new-followup-version');
+ db=makeState();editingInteraction=db.interactions[0];page='log';const refreshed=structuredClone(db);refreshed.interactions[0].summary='New server notes';
+ const originalApp=app;let reopened=false;app=()=>{reopened=true};fetch=async()=>({ok:true,json:async()=>({state:refreshed})});
+ await reloadLatestSaveForm();assert(reopened);assert.equal(editingInteraction.summary,'New server notes');assert.equal(page,'log');app=originalApp;
+ db=makeState();db.activeUser='u-admin';db.contracts['u-jamie']={hourlyRate:999};contractAllowances=[{owner:'u-jamie',private:true}];advisorTimeEntries=[{private:true}];
+ localStorage.setItem(STORE,JSON.stringify(db));let loginMessage;
+ loginPage=message=>{loginMessage=message};fetch=async()=>({ok:true});await signOut();
+ assert.equal(localStorage.getItem(STORE),null);assert.equal(Object.keys(db.contracts||{}).length,0);assert.equal(contractAllowances.length,0);assert.equal(advisorTimeEntries.length,0);assert.equal(loginMessage,'');
+ // A successful response from a previous account must not restore private data after logout.
+ db=makeState();const privateState=structuredClone(db);let completeLate;
+ fetch=()=>new Promise(resolve=>{completeLate=resolve});const lateSave=save();resetAccountState();
+ completeLate({ok:true,status:200,json:async()=>({ok:true,state:privateState})});assert.equal(await lateSave,false);assert.equal(Object.keys(db.contracts||{}).length,0);
+ db=makeState();let finishRefresh;fetch=()=>new Promise(resolve=>{finishRefresh=resolve});
+ const request=navigationRequest,lateRefresh=refreshWorkspace(request);resetAccountState();
+ finishRefresh({ok:true,json:async()=>({state:privateState})});await lateRefresh;assert.equal(Object.keys(db.contracts||{}).length,0);
+ db=makeState();localStorage.setItem(STORE,JSON.stringify(db));fetch=()=>Promise.reject(new Error('Offline'));
+ await signOut();assert.equal(localStorage.getItem(STORE),null);assert.equal(Object.keys(db.contracts||{}).length,0);assert(loginMessage.includes('could not be confirmed'));
+ console.log('Demo safety UI checks passed: confirmed saves only, rollback, conflict feedback, missing meeting times, follow-up versions, cache cleanup and delayed-response privacy.');
+})();

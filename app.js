@@ -1,4 +1,4 @@
-/* Clubhouse: relationship activity tracker for professional sports clubs. */
+/* Advisor Activity Tracker: relationship activity tracker for professional sports clubs. */
 const LEAGUES={NFL:['Arizona Cardinals','Atlanta Falcons','Baltimore Ravens','Buffalo Bills','Carolina Panthers','Chicago Bears','Cincinnati Bengals','Cleveland Browns','Dallas Cowboys','Denver Broncos','Detroit Lions','Green Bay Packers','Houston Texans','Indianapolis Colts','Jacksonville Jaguars','Kansas City Chiefs','Las Vegas Raiders','Los Angeles Chargers','Los Angeles Rams','Miami Dolphins','Minnesota Vikings','New England Patriots','New Orleans Saints','New York Giants','New York Jets','Philadelphia Eagles','Pittsburgh Steelers','San Francisco 49ers','Seattle Seahawks','Tampa Bay Buccaneers','Tennessee Titans','Washington Commanders'],MLB:['Arizona Diamondbacks','Atlanta Braves','Baltimore Orioles','Boston Red Sox','Chicago Cubs','Chicago White Sox','Cincinnati Reds','Cleveland Guardians','Colorado Rockies','Detroit Tigers','Houston Astros','Kansas City Royals','Los Angeles Angels','Los Angeles Dodgers','Miami Marlins','Milwaukee Brewers','Minnesota Twins','New York Mets','New York Yankees','Athletics','Philadelphia Phillies','Pittsburgh Pirates','San Diego Padres','San Francisco Giants','Seattle Mariners','St. Louis Cardinals','Tampa Bay Rays','Texas Rangers','Toronto Blue Jays','Washington Nationals'],MLS:['Atlanta United','Austin FC','Charlotte FC','Chicago Fire FC','FC Cincinnati','Colorado Rapids','Columbus Crew','D.C. United','FC Dallas','Houston Dynamo FC','Inter Miami CF','LA Galaxy','Los Angeles Football Club','Minnesota United FC','CF Montréal','Nashville SC','New England Revolution','New York City FC','New York Red Bulls','Orlando City SC','Philadelphia Union','Portland Timbers','Real Salt Lake','San Diego FC','San Jose Earthquakes','Seattle Sounders FC','Sporting Kansas City','St. Louis CITY SC','Toronto FC','Vancouver Whitecaps FC'],NHL:['Anaheim Ducks','Boston Bruins','Buffalo Sabres','Calgary Flames','Carolina Hurricanes','Chicago Blackhawks','Colorado Avalanche','Columbus Blue Jackets','Dallas Stars','Detroit Red Wings','Edmonton Oilers','Florida Panthers','Los Angeles Kings','Minnesota Wild','Montréal Canadiens','Nashville Predators','New Jersey Devils','New York Islanders','New York Rangers','Ottawa Senators','Philadelphia Flyers','Pittsburgh Penguins','San Jose Sharks','Seattle Kraken','St. Louis Blues','Tampa Bay Lightning','Toronto Maple Leafs','Utah Mammoth','Vancouver Canucks','Vegas Golden Knights','Washington Capitals','Winnipeg Jets'],NBA:['Atlanta Hawks','Boston Celtics','Brooklyn Nets','Charlotte Hornets','Chicago Bulls','Cleveland Cavaliers','Dallas Mavericks','Denver Nuggets','Detroit Pistons','Golden State Warriors','Houston Rockets','Indiana Pacers','LA Clippers','Los Angeles Lakers','Memphis Grizzlies','Miami Heat','Milwaukee Bucks','Minnesota Timberwolves','New Orleans Pelicans','New York Knicks','Oklahoma City Thunder','Orlando Magic','Philadelphia 76ers','Phoenix Suns','Portland Trail Blazers','Sacramento Kings','San Antonio Spurs','Toronto Raptors','Utah Jazz','Washington Wizards']};
 const LOGO_CODES={NFL:['ari','atl','bal','buf','car','chi','cin','cle','dal','den','det','gb','hou','ind','jax','kc','lv','lac','lar','mia','min','ne','no','nyg','nyj','phi','pit','sf','sea','tb','ten','was'],MLB:['ari','atl','bal','bos','chc','chw','cin','cle','col','det','hou','kc','laa','lad','mia','mil','min','nym','nyy','oak','phi','pit','sd','sf','sea','stl','tb','tex','tor','was'],MLS:['atl','aus','clt','chi','cin','col','clb','dc','dal','hou','mia','la','laf','min','mtl','nash','ne','nyc','ny','orl','phi','por','rsl','sd','sj','sea','skc','stl','tor','van'],NHL:['ana','bos','buf','cgy','car','chi','col','cbj','dal','det','edm','fla','la','min','mtl','nsh','nj','nyi','nyr','ott','phi','pit','sj','sea','stl','tb','tor','uta','van','vgk','was','wpg'],NBA:['atl','bos','bkn','cha','chi','cle','dal','den','det','gs','hou','ind','lac','lal','mem','mia','mil','min','no','ny','okc','orl','phi','phx','por','sac','sa','tor','utah','wsh']};
 const CAPS=['Marketing in a Box','Finance in a Box','Ticket Sales Accelerator','Collections Accelerator','Search & Retrieval','Smart Stadium','Other'];
@@ -44,8 +44,22 @@ function seedShowcaseData(actor){
 }
 function linkShowcaseMeetings(){let changed=false;for(const meeting of db.meetings||[]){if(!meeting.sample||meeting.status!=='Planned')continue;const candidates=(db.interactions||[]).filter(i=>i.sample&&i.clubId===meeting.clubId&&i.date<=meeting.date&&(i.owner===meeting.owner||!meeting.owner)).sort((a,b)=>Number(b.nextStepType==='Meeting scheduled')-Number(a.nextStepType==='Meeting scheduled')||b.date.localeCompare(a.date));const interaction=candidates[0];if(!interaction)continue;if(meeting.interactionId&&meeting.interactionId!==interaction.id){const old=(db.interactions||[]).find(i=>i.id===meeting.interactionId);if(old?.meetingId===meeting.id)old.meetingId=''}if(meeting.interactionId!==interaction.id||interaction.meetingId!==meeting.id||interaction.nextMeeting!==meeting.date||interaction.nextMeetingTime!==(meeting.time||'')){meeting.interactionId=interaction.id;interaction.meetingId=meeting.id;interaction.nextMeeting=meeting.date;interaction.nextMeetingTime=meeting.time||'';interaction.nextAgenda=meeting.agenda||'';changed=true}}
  const cowboys=(db.interactions||[]).find(i=>i.id==='showcase-cowboys-2'&&i.sample);if(cowboys)for(const f of cowboys.followups||[])if(f.owner!==cowboys.owner){f.owner=cowboys.owner;changed=true}return changed}
-const STORE='clubhouse_v1';let db;try{db=JSON.parse(localStorage.getItem(STORE))||freshDB()}catch(e){db=freshDB()};
-function save(){localStorage.setItem(STORE,JSON.stringify(db));fetch('/api/state',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({state:db})}).then(async r=>{if(!r.ok){const e=await r.json();toast(e.error||'Could not save to the local server')}}).catch(()=>{})}const user=()=>db.users.find(u=>u.id===db.activeUser)||db.users[0];const isAdmin=()=>user().role==='Admin';const isSubadmin=()=>user().role==='Sub-admin';const isStaff=()=>isAdmin()||isSubadmin();const $=s=>document.querySelector(s);const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const STORE='clubhouse_v1';let db=freshDB(),accountEpoch=0;
+function clearWorkspaceCache(){try{localStorage.removeItem(STORE)}catch{}}
+clearWorkspaceCache();
+async function save(){
+ const epoch=accountEpoch;
+ const response=await fetch('/api/state',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({state:db})});
+ const result=await response.json().catch(()=>null);
+ if(epoch!==accountEpoch)return false;
+ if(!response.ok||!result?.ok||!result.state){
+  const error=new Error(result?.error||'Could not save this record. Check the server and try again.');error.status=response.status;
+  if(response.status===401)loginPage('Your session expired. Sign in again.');
+  throw error;
+ }
+ db=result.state;clearWorkspaceCache();return true;
+}
+const user=()=>db.users.find(u=>u.id===db.activeUser)||db.users[0];const isAdmin=()=>user().role==='Admin';const isSubadmin=()=>user().role==='Sub-admin';const isStaff=()=>isAdmin()||isSubadmin();const $=s=>document.querySelector(s);const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let page='home',selectedClub=null,clubTab='history',toastTimer,editingMeeting=null,editingInteraction=null,meetingToComplete=null,activeDigestItems=[],selectedContractUser='u-avery',editContractsMode=false,followupRange='open',calendarMonth=new Date(new Date().getFullYear(),new Date().getMonth(),1),selectedCalendarDate=dt();
 const clubBy=id=>db.clubs.find(c=>c.id===id);const who=id=>db.users.find(u=>u.id===id)?.name||'Unassigned';
 function exlPoc(i){if(i.exlPoc)return i.exlPoc;const p=(i.participants||[]).find(x=>(x.role||'').toLowerCase().includes('poc'))||(i.participants||[])[0];return p?.name||who(i.owner)}
@@ -62,29 +76,83 @@ function interactionNextMeeting(i,meetings=db.meetings||[]){
  return null;
 }
 function followupControls(f){if(!followupCanEdit(f))return '';return f.status==='Open'?`<span class="followup-controls"><button type="button" class="action-link follow-action" data-follow-status="${esc(f.id)}" data-next="Done">Mark done</button><button type="button" class="action-link follow-action cancel-follow-action" data-follow-status="${esc(f.id)}" data-next="Canceled">Cancel action</button></span>`:`<button type="button" class="action-link follow-action" data-follow-status="${esc(f.id)}" data-next="Open">Reopen</button>`}
-const initials=n=>n.split(' ').map(x=>x[0]).slice(0,2).join('').toUpperCase();const visibleClubs=()=>db.clubs;const canSeeClub=id=>!!clubBy(id);const visibleInteractions=()=>db.interactions.filter(i=>isStaff()||i.owner===user().id);const visibleMeetings=()=>db.meetings.filter(m=>m.status==='Planned'&&(isStaff()||m.owner===user().id));const allFollowups=()=>[...db.interactions.flatMap(i=>(i.followups||[]).map(f=>({...f,interaction:i,club:clubBy(i.clubId)}))).filter(f=>isStaff()||f.owner===user().id||f.interaction.owner===user().id),...(isStaff()?[]:(db.assignedFollowups||[]).map(f=>({...f,interaction:{id:f.interactionId,owner:f.interactionOwner,clubId:f.clubId},club:clubBy(f.clubId)})))];
+const initials=n=>n.split(' ').map(x=>x[0]).slice(0,2).join('').toUpperCase();
+const companyAccessFor=(advisor=user().id)=>db.companyAccess?.[advisor]||{mode:'all',companyIds:[],revision:0};
+const canSeeClub=id=>!!clubBy(id)&&(isStaff()||companyAccessFor().mode==='all'||companyAccessFor().companyIds.includes(id));
+const canCreateCompany=()=>!isStaff()&&companyAccessFor().mode==='all';
+const visibleClubs=()=>db.clubs.filter(c=>canSeeClub(c.id));
+const visibleInteractions=()=>db.interactions.filter(i=>(isStaff()||i.owner===user().id)&&canSeeClub(i.clubId));
+const visibleMeetings=()=>db.meetings.filter(m=>m.status==='Planned'&&(isStaff()||m.owner===user().id)&&canSeeClub(m.clubId));
+const allFollowups=()=>[...db.interactions.flatMap(i=>(i.followups||[]).map(f=>({...f,interaction:i,club:clubBy(i.clubId)}))).filter(f=>isStaff()||f.owner===user().id||f.interaction.owner===user().id),...(isStaff()?[]:(db.assignedFollowups||[]).map(f=>({...f,interaction:{id:f.interactionId,owner:f.interactionOwner,clubId:f.clubId},club:clubBy(f.clubId)})))].filter(f=>canSeeClub(f.club?.id));
+let navigationRequest=0;
+async function refreshWorkspace(request){
+ const response=await fetch('/api/state');const result=await response.json();
+ if(!response.ok||!result.state)throw new Error(result.error||'Could not refresh the workspace');
+ if(request!==navigationRequest)return;
+ db=result.state;
+ clearWorkspaceCache();
+}
+async function navigateToPage(id){
+ const request=++navigationRequest;
+ try{await refreshWorkspace(request);if(request!==navigationRequest)return;page=id==='digest'?'home':id;selectedClub=null;editingInteraction=null;meetingToComplete=null;app()}
+ catch(error){if(request===navigationRequest)toast(error.message)}
+}
+
 function fmt(d,opts={month:'short',day:'numeric',year:'numeric'}){if(!d)return '—';return new Date(`${d}T12:00:00`).toLocaleDateString('en-US',opts)}function relative(d){const delta=Math.round((new Date(d+'T12:00:00')-new Date(dt()+'T12:00:00'))/86400000);return delta<0?`${Math.abs(delta)}d overdue`:delta===0?'Due today':delta===1?'Due tomorrow':`Due in ${delta}d`}
 function toast(msg){const el=document.createElement('div');el.className='toast';el.setAttribute('role','status');el.setAttribute('aria-live','polite');el.setAttribute('aria-atomic','true');el.textContent=msg;document.body.append(el);setTimeout(()=>el.remove(),3500)}
-function icon(name){return ({home:'◫',clubs:'▦',log:'＋',followups:'✓',digest:'◷',admin:'⚙'})[name]||'•'}
-function app(){const u=user();document.getElementById('app').innerHTML=`<a class="skip-link" href="#view">Skip to main content</a><div class="app-shell"><aside class="sidebar"><div class="brand"><div class="brand-mark">C</div><div><div class="brand-name">clubhouse</div><div class="brand-sub">Relationship activity</div></div></div><div class="nav-label">Workspace</div><nav class="nav">${[['home','Overview'],['clubs','Club directory'],...(isStaff()?[['roadmap','Product Roadmap'],['time-expenses','Time & expense review']]:[]),...(isStaff()?[]:[['log','Log interaction']]),['followups',isStaff()?'Next steps summary':'My next steps'],...(isStaff()?[]:[['time-expenses','Time & expenses'],['contracts','My contract terms']])].map(([id,label])=>`<button class="${(page===id||(id==='home'&&page==='digest'))?'active':''}" data-page="${id}" aria-label="${label}" aria-current="${(page===id||(id==='home'&&page==='digest'))?'page':'false'}"><span class="nav-icon">${icon(id)}</span><span>${label}</span></button>`).join('')}${isStaff()?`<div class="nav-divider"></div><div class="nav-label">Administration</div><button class="${page==='admin'?'active':''}" data-page="admin" aria-current="${page==='admin'?'page':'false'}" aria-label="Workspace users"><span class="nav-icon">${icon('admin')}</span><span>Workspace users</span></button><button class="${page==='contracts'?'active':''}" data-page="contracts" aria-current="${page==='contracts'?'page':'false'}" aria-label="Advisor / EXL POC contracts"><span class="nav-icon">▤</span><span>Advisor / EXL POC contracts</span></button>`:''}</nav><div class="sidebar-bottom"><div class="profile"><div class="avatar">${initials(u.name)}</div><div><div class="profile-name">${esc(u.name)}</div><div class="profile-role">${esc(u.title==='Internal POC'?'Advisor / EXL POC':u.title)}</div></div><button class="signout" id="signout">Sign out</button></div></div></aside><main class="main"><header class="topbar"><div class="crumb">Relationship activity <span style="color:#bbc5bd"> / </span> ${pageLabel()}</div><div class="top-right"><span class="today">${new Date().toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})}</span><div class="user-small"><div class="avatar">${initials(u.name)}</div>${esc(u.name)}</div><button class="btn top-signout" id="signout-top" type="button">Sign out</button></div></header><div class="content" id="view" tabindex="-1"></div></main></div>`;renderPage();bindShell()}
-function pageLabel(){return ({home:'Overview',roadmap:'Product Roadmap','time-expenses':isStaff()?'Time & expense review':'Time & expenses',clubs:'Club directory',log:'Log interaction',followups:isStaff()?'Next steps summary':'My next steps',contracts:isStaff()?'Advisor / EXL POC contracts':'My contract terms',digest:'Overview',admin:'Workspace users',club:'Club detail'})[page]||'Overview'}
-function bindShell(){document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{page=b.dataset.page==='digest'?'home':b.dataset.page;selectedClub=null;app()});document.querySelectorAll('#signout,#signout-top').forEach(b=>b.onclick=async()=>{await fetch('/api/logout',{method:'POST',credentials:'same-origin'});loginPage()})}
+function icon(name){return ({home:'◫',clubs:'▦',log:'＋',followups:'✓',digest:'◷',admin:'⚙',advisors:'◎'})[name]||'•'}
+function app(){const u=user();document.getElementById('app').innerHTML=`<a class="skip-link" href="#view">Skip to main content</a><div class="app-shell"><aside class="sidebar"><div class="brand"><div class="brand-mark">A</div><div><div class="brand-name">Advisor Activity Tracker</div><div class="brand-sub">Advisor activity</div></div></div><div class="nav-label">Workspace</div><nav class="nav">${[['home','Overview'],['clubs','CME directory'],...(isStaff()?[['advisors','Advisors'],['time-expenses','Timesheets & expenses']]:[]),...(isStaff()?[]:[['log','Log interaction']]),['followups',isStaff()?'Next steps summary':'My next steps'],...(isStaff()?[]:[['time-expenses','Time & expenses'],['contracts','My contract terms']])].map(([id,label])=>`<button class="${(page===id||(id==='home'&&page==='digest'))?'active':''}" data-page="${id}" aria-label="${label}" aria-current="${(page===id||(id==='home'&&page==='digest'))?'page':'false'}"><span class="nav-icon">${icon(id)}</span><span>${label}</span></button>`).join('')}${isStaff()?`<div class="nav-divider"></div><div class="nav-label">Administration</div><button class="${page==='admin'?'active':''}" data-page="admin" aria-current="${page==='admin'?'page':'false'}" aria-label="Workspace users"><span class="nav-icon">${icon('admin')}</span><span>Workspace users</span></button><button class="${page==='contracts'?'active':''}" data-page="contracts" aria-current="${page==='contracts'?'page':'false'}" aria-label="Advisor / EXL POC contracts"><span class="nav-icon">▤</span><span>Advisor / EXL POC contracts</span></button>`:''}</nav><div class="sidebar-bottom"><div class="profile"><div class="avatar">${initials(u.name)}</div><div><div class="profile-name">${esc(u.name)}</div><div class="profile-role">${esc(u.title==='Internal POC'?'Advisor / EXL POC':u.title)}</div></div><button class="signout" id="signout">Sign out</button></div><div class="creator-credit"><span>Designed &amp; built by</span><strong>NARENTHER MS</strong></div></div></aside><main class="main"><header class="topbar"><div class="crumb">Advisor activity <span style="color:#bbc5bd"> / </span> ${pageLabel()}</div><div class="top-right"><span class="today">${new Date().toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})}</span><div class="user-small"><div class="avatar">${initials(u.name)}</div>${esc(u.name)}</div><button class="btn top-signout" id="signout-top" type="button">Sign out</button></div></header><div class="content" id="view" tabindex="-1"></div></main></div>`;renderPage();bindShell()}
+function pageLabel(){return ({home:'Overview',advisors:'Advisors','time-expenses':isStaff()?'Timesheets & expenses':'Time & expenses',clubs:'CME directory',log:'Log interaction',followups:isStaff()?'Next steps summary':'My next steps',contracts:isStaff()?'Advisor / EXL POC contracts':'My contract terms',digest:'Overview',admin:'Workspace users',club:'Club detail'})[page]||'Overview'}
+function bindShell(){document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>navigateToPage(b.dataset.page));document.querySelectorAll('#signout,#signout-top').forEach(b=>b.onclick=signOut)}
+function resetAccountState(){
+ accountEpoch++;navigationRequest++;clearWorkspaceCache();db=freshDB();page='home';
+ selectedClub=null;editingMeeting=null;editingInteraction=null;meetingToComplete=null;activeDigestItems=[];
+ contractAllowances=[];advisorTimeEntries=[];selectedAdvisorId=null;selectedContractUser='';editContractsMode=false;selectedCompanyAdvisor='';
+ directoryLeague='';advisorActivityMode='all';advisorActivityFrom='';advisorActivityTo='';timeExpenseTab='time';
+}
+async function signOut(){
+ resetAccountState();const epoch=accountEpoch;
+ document.getElementById('app').innerHTML='<main class="login-screen"><div role="status">Signing out…</div></main>';
+ let message='';
+ try{const response=await fetch('/api/logout',{method:'POST',credentials:'same-origin'});if(!response.ok)throw new Error('Sign-out was not confirmed')}
+ catch{message='Account data was cleared from this browser, but server sign-out could not be confirmed. Reconnect before signing in again.'}
+ if(epoch===accountEpoch)loginPage(message);
+}
 function head(kicker,title,desc,action=''){return `<div class="page-head"><div><div class="greeting">${kicker}</div><h1 class="page-title">${title}</h1><p class="page-desc">${desc}</p></div>${action?`<div class="head-actions">${action}</div>`:''}</div>`}
 function stat(label,note,value,ico){return `<div class="stat-card"><div class="stat-top"><div class="stat-label">${label}</div><div class="stat-icon">${ico}</div></div><div class="stat-num">${value}</div><div class="stat-note">${note}</div></div>`}
 function clubShort(c){return c?.name||'Unknown club'}function leagueTag(l){return `<span class="pill blue">${l}</span>`}function capsTags(a,other){return (a||[]).map(c=>`<span class="pill ${c==='Other'?'orange':'green'}">${esc(c==='Other'&&other?`Other · ${other}`:c)}</span>`).join('')}
 function clubLogoUrl(c){const names=LEAGUES[c.league]||[],index=names.indexOf(c.name),code=LOGO_CODES[c.league]?.[index],sport={NFL:'nfl',MLB:'mlb',MLS:'soccer',NHL:'nhl',NBA:'nba'}[c.league];return code&&sport?`https://a.espncdn.com/i/teamlogos/${sport}/500/${code}.png`:''}
 function bindFieldLabels(root){root.querySelectorAll('.field').forEach(field=>{const label=field.querySelector(':scope > label'),control=field.querySelector('input:not([type=hidden]),select,textarea');if(!label||!control||label.htmlFor)return;if(!control.id)control.id='field-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,9);label.htmlFor=control.id})}
-function renderPage(){const v=$('#view');if(page==='roadmap'){renderRoadmap(v);return}if(page==='time-expenses'){renderTimeExpenses(v);return}if(page==='home')v.innerHTML=homePage();else if(page==='clubs')v.innerHTML=clubsPage();else if(page==='club')v.innerHTML=clubPage();else if(page==='log')v.innerHTML=isStaff()?`${head('ADMIN VIEW','Interaction entry is for regular users','The Admin account reviews activity. Sign in as an advisor / EXL POC to log a conversation.')}`:interactionForm();else if(page==='followups')v.innerHTML=followupsPage();else if(page==='digest')v.innerHTML=digestPage();else if(page==='admin')v.innerHTML=adminPage();else if(page==='contracts')v.innerHTML=contractPage();bindFieldLabels(v);bindPage()}
+function renderPage(){const v=$('#view');if(page==='advisors'){renderAdvisors(v);return}if(page==='time-expenses'){renderTimeExpenses(v);return}if(page==='contracts'){renderContracts(v);return}if(page==='home')v.innerHTML=homePage();else if(page==='clubs')v.innerHTML=clubsPage();else if(page==='club')v.innerHTML=clubPage();else if(page==='log')v.innerHTML=isStaff()?`${head('ADMIN VIEW','Interaction entry is for regular users','The Admin account reviews activity. Sign in as an advisor / EXL POC to log a conversation.')}`:interactionForm();else if(page==='followups')v.innerHTML=followupsPage();else if(page==='digest')v.innerHTML=digestPage();else if(page==='admin')v.innerHTML=adminPage();bindFieldLabels(v);bindPage()}
 function homePage(){return digestPage()}
 function activityRow(i){const c=clubBy(i.clubId);return '<div class="activity-row"><div class="league-mark">'+(c?.league||'—')+'</div><div><div class="activity-club">'+esc(clubShort(c))+'</div><div class="activity-meta">'+fmt(i.date)+' · '+contactMeta(i)+'</div><div class="activity-summary">'+esc(i.summary)+'</div><div class="cap-list">'+capsTags(i.capabilities,i.other)+'</div></div><button class="action-link" data-open-club="'+i.clubId+'">History →</button></div>'}
 function meetingTypeLabel(type){
  if(type==='Discovery meeting'||type==='Working session')return 'Follow-up meeting';
  return type||'Planned meeting';
 }
-function meetingCard(m){const c=clubBy(m.clubId);const d=new Date(m.date+'T12:00:00');return `<div class="meeting-item"><div class="date-box"><span class="month">${d.toLocaleDateString('en-US',{month:'short'})}</span><span class="day">${d.getDate()}</span></div><div><div class="meeting-name">${esc(clubShort(c))} <span class="pill blue">${esc(meetingTypeLabel(m.meetingType))}</span></div><div class="meeting-info"><strong>Meeting:</strong> ${fmt(m.date)} · ${esc(meetingTimeLabel(m.time))}${m.clubPoc?' · '+esc(m.clubPoc)+(m.clubPocDesignation?' — '+esc(m.clubPocDesignation):''):''}</div>${m.agenda?`<div class="meeting-info"><strong>Agenda:</strong> ${esc(m.agenda)}</div>`:''}</div></div>`}
+function meetingCard(m){const c=clubBy(m.clubId);const d=new Date(m.date+'T12:00:00');return `<div class="meeting-item"><div class="date-box"><span class="month">${d.toLocaleDateString('en-US',{month:'short'})}</span><span class="day">${d.getDate()}</span></div><div><div class="meeting-name">${esc(clubShort(c))} <span class="pill blue">${esc(meetingTypeLabel(m.meetingType))}</span></div><div class="meeting-info"><strong>Meeting:</strong> ${fmt(m.date)} · ${esc(meetingTimeLabel(m.time))}${m.clubPoc?' · '+esc(m.clubPoc)+(m.clubPocDesignation?' — '+esc(m.clubPocDesignation):''):''}</div>${isStaff()?`<div class="meeting-info"><strong>Meeting owner:</strong> ${esc(who(m.owner))}</div>`:''}${m.agenda?`<div class="meeting-info"><strong>Agenda:</strong> ${esc(m.agenda)}</div>`:''}</div></div>`}
 function taskCard(f){const statusClass=f.status==='Done'?'green':f.status==='Canceled'?'red':'orange';return `<div class="task-item"><span class="task-dot ${f.due<dt()&&f.status==='Open'?'overdue':''}"></span><div class="task-card-content"><div class="task-name">${esc(f.description)}</div><div class="task-info">${esc(clubShort(f.club))} · Action due ${fmt(f.due)} · Owner: ${esc(who(f.owner))}</div><div class="task-card-footer"><span class="pill ${statusClass}">${esc(f.status)}${f.status==='Open'&&f.due<dt()?' · Overdue':''}</span>${followupControls(f)}</div></div></div>`}
-function clubsPage(){const clubs=visibleClubs();return `${head('CLUB DIRECTORY','Know every relationship','Find a club to review history, upcoming meetings, and follow-through.',isStaff()?'':'<button class="btn primary" data-page="log">＋ &nbsp; Log interaction</button>')}<div class="card"><div class="card-head"><div><div class="card-title">Professional sports clubs</div><div class="card-sub">${clubs.length} clubs across all five leagues</div></div><div class="filters"><input class="input search" id="club-search" placeholder="Search clubs…"><select class="select" id="league-filter"><option value="all">All leagues</option>${Object.keys(LEAGUES).map(l=>`<option>${l}</option>`).join('')}</select></div></div><div class="club-list" id="club-results">${clubCards(clubs)}</div></div>`}
-function clubCards(clubs){return clubs.length?clubs.map(c=>{const n=visibleInteractions().filter(i=>i.clubId===c.id).length,logo=clubLogoUrl(c);return `<button type="button" class="club-card" data-league="${c.league}" data-open-club="${c.id}" aria-label="Open ${esc(c.name)}, ${n} ${n===1?'interaction':'interactions'}"><span class="club-logo">${initials(c.name)}${logo?`<img class="club-logo-img" src="${logo}" alt="" aria-hidden="true" loading="lazy" decoding="async" referrerpolicy="no-referrer">`:''}</span><span class="club-main"><span class="club-name">${esc(c.name)}</span><span class="club-meta">${c.league}</span></span><span class="club-count">${n} ${n===1?'interaction':'interactions'}</span></button>`}).join(''):`<div class="empty">No clubs match your search.</div>`}
+let directoryLeague='';
+const directoryLeagues={
+ NFL:['National Football League','https://a.espncdn.com/i/teamlogos/leagues/500/nfl.png'],
+ MLB:['Major League Baseball','https://a.espncdn.com/i/teamlogos/leagues/500/mlb.png'],
+ MLS:['Major League Soccer','https://a.espncdn.com/i/leaguelogos/soccer/500/19.png'],
+ NHL:['National Hockey League','https://a.espncdn.com/i/teamlogos/leagues/500/nhl.png'],
+ NBA:['National Basketball Association','https://a.espncdn.com/i/teamlogos/leagues/500/nba.png'],
+ Other:['Companies and organizations','']
+};
+function clubsPage(){
+ const directory=Object.entries(directoryLeagues).map(([league,[name,logo]])=>`<button type="button" class="directory-league-card" data-directory-league="${league}" aria-pressed="${directoryLeague===league}">
+ <span class="directory-league-logo" aria-hidden="true">${logo?`<img src="${logo}" alt="" width="88" height="88">`:'<span class="directory-other-icon">＋</span>'}</span>
+ <span class="directory-league-title">${league}</span><span class="directory-league-name">${name}</span>
+ <span class="directory-league-arrow" aria-hidden="true">→</span></button>`).join('');
+ return `${head('','CME directory','','')}<div class="directory-leagues" role="group" aria-label="League or organization type">${directory}</div>
+ ${directoryLeague?`<section class="card directory-results" aria-label="${directoryLeague} directory"><div class="card-head"><h2 class="card-title">${directoryLeagues[directoryLeague][0]}</h2>
+ <label class="directory-search"><span>${directoryLeague==='Other'?'Search organizations':'Search clubs'}</span><input class="input" type="search" id="club-search"></label>
+ ${directoryLeague==='Other'&&canCreateCompany()?'<form id="directory-organization" class="directory-search"><label>Company or organization name <input class="input" name="organizationName" maxlength="120" required></label><button class="btn primary">Log interaction</button></form>':''}</div>
+ <div class="club-list" id="club-results">${clubCards(visibleClubs().filter(club=>club.league===directoryLeague))}</div></section>`:''}`;
+}
+function clubCards(clubs){return clubs.length?clubs.map(c=>{const n=visibleInteractions().filter(i=>i.clubId===c.id).length,logo=clubLogoUrl(c);return `<button type="button" class="club-card" data-league="${c.league}" data-open-club="${c.id}" aria-label="Open ${esc(c.name)}, ${n} ${n===1?'interaction':'interactions'}"><span class="club-logo">${initials(c.name)}${logo?`<img class="club-logo-img" src="${logo}" alt="" aria-hidden="true" loading="lazy" decoding="async" referrerpolicy="no-referrer">`:''}</span><span class="club-main"><span class="club-name">${esc(c.name)}</span><span class="club-meta">${c.league}</span></span><span class="club-count">${n} ${n===1?'interaction':'interactions'}</span></button>`}).join(''):`<div class="empty">No companies found.</div>`}
 function clubOverview(club,interactions,plannedMeetings){
  const exl=new Map(),stakeholders=new Map();
  const add=(map,name,role='')=>{if(!name)return;const key=name.trim().toLowerCase();if(!map.has(key))map.set(key,{name:name.trim(),roles:new Set()});if(role)map.get(key).roles.add(role.trim())};
@@ -123,9 +191,9 @@ function clubPage(){
  const upcoming=meetings.filter(m=>m.date>=dt()),upcomingSteps=fs;
  const followthrough=upcoming.length||upcomingSteps.length?`<div class="club-followthrough">${upcoming.length?`<section class="card"><div class="card-head"><div><div class="card-title">Upcoming meetings</div></div></div><div class="card-body scroll-list" tabindex="0" role="region" aria-label="Upcoming meetings">${upcoming.map(meetingCard).join('')}</div></section>`:''}${upcomingSteps.length?`<section class="card"><div class="card-head"><div><div class="card-title">Next steps</div></div></div><div class="card-body scroll-list" tabindex="0" role="region" aria-label="Next steps">${upcomingSteps.map(taskCard).join('')}</div></section>`:''}</div>`:'';
  const details=snapshot||followthrough?`<div class="detail-columns ${snapshot&&followthrough?'':'single-detail-column'}">${snapshot}${followthrough}</div>`:'';
- return `${head('CLUB RELATIONSHIP',esc(c.name),ix.length?`${c.league} · ${ix.length} completed ${ix.length===1?'interaction':'interactions'}`:c.league,`<button class="btn" data-page="clubs">← &nbsp; All clubs</button>${isStaff()?'':`<button class="btn primary" data-log-club="${c.id}">＋ &nbsp; Log interaction</button>`}`)}<div class="card">${clubOverview(c,ix,meetings)}<div class="club-tabs"><button class="club-tab ${clubTab==='history'?'active':''}" data-tab="history">Interaction history${ix.length?` (${ix.length})`:''}</button><button class="club-tab ${clubTab==='meetings'?'active':''}" data-tab="meetings">Planned meetings${meetings.length?` (${meetings.length})`:''}</button><button class="club-tab ${clubTab==='followups'?'active':''}" data-tab="followups">Next steps${clubSteps.length?` (${clubSteps.length})`:''}</button></div><div id="club-tab-body">${body}</div></div>${details}`;
+ return `${head('CLUB RELATIONSHIP',esc(c.name),ix.length?`${c.league} · ${ix.length} completed ${ix.length===1?'interaction':'interactions'}`:c.league,`<button class="btn" data-page="clubs">← &nbsp; CME directory</button>${isStaff()?'':`<button class="btn primary" data-log-club="${c.id}">＋ &nbsp; Log interaction</button>`}`)}<div class="card">${clubOverview(c,ix,meetings)}<div class="club-tabs"><button class="club-tab ${clubTab==='history'?'active':''}" data-tab="history">Interaction history${ix.length?` (${ix.length})`:''}</button><button class="club-tab ${clubTab==='meetings'?'active':''}" data-tab="meetings">Planned meetings${meetings.length?` (${meetings.length})`:''}</button><button class="club-tab ${clubTab==='followups'?'active':''}" data-tab="followups">Next steps${clubSteps.length?` (${clubSteps.length})`:''}</button></div><div id="club-tab-body">${body}</div></div>${details}`;
 }
-function historyPreview(id){const c=clubBy(id);if(!c)return '';const history=visibleInteractions().filter(x=>x.clubId===id).sort((a,b)=>b.date.localeCompare(a.date));if(!history.length)return `<div class="note" style="margin:0 0 14px">No previous interactions for ${esc(c.name)} yet.</div>`;return `<div class="card" style="margin-bottom:14px"><div class="card-head"><div><div class="card-title">${esc(c.name)} · recent history</div></div><button type="button" class="link-btn" data-open-club="${c.id}">Open club →</button></div><div class="card-body">${history.slice(0,2).map(x=>`<div class="activity-row"><div class="league-mark">${c.league}</div><div><div class="activity-club">${fmt(x.date)}</div><div class="activity-summary">${esc(x.summary)}</div><div class="cap-list">${capsTags(x.capabilities,x.other)}</div></div></div>`).join('')}</div></div>`}
+function historyPreview(id){const c=clubBy(id);if(!c||!canSeeClub(id))return '';const history=visibleInteractions().filter(x=>x.clubId===id).sort((a,b)=>b.date.localeCompare(a.date));if(!history.length)return `<div class="note" style="margin:0 0 14px">No previous interactions for ${esc(c.name)} yet.</div>`;return `<div class="card" style="margin-bottom:14px"><div class="card-head"><div><div class="card-title">${esc(c.name)} · recent history</div></div><button type="button" class="link-btn" data-open-club="${c.id}">Open club →</button></div><div class="card-body">${history.slice(0,2).map(x=>`<div class="activity-row"><div class="league-mark">${c.league}</div><div><div class="activity-club">${fmt(x.date)}</div><div class="activity-summary">${esc(x.summary)}</div><div class="cap-list">${capsTags(x.capabilities,x.other)}</div></div></div>`).join('')}</div></div>`}
 function meetingCapabilityFields(name, selected=[], id=''){
  return `<fieldset class="meeting-capability-fields field full"${id?` id="${id}" hidden`:''}><legend>Capabilities planned for discussion</legend><div class="check-grid">${CAPS.filter(cap=>cap!=='Other').map(cap=>`<label class="check-option"><input type="checkbox" name="${name}" value="${esc(cap)}"${selected.includes(cap)?' checked':''}>${esc(cap)}</label>`).join('')}</div></fieldset>`;
 }
@@ -144,6 +212,57 @@ function syncMeetingCapabilities(form){
  }
 }
 
+function findOrganization(name){
+ return visibleClubs().find(club=>club.league==='Other'&&club.name.toLowerCase()===name.toLowerCase());
+}
+
+function organizationField(){
+ return '<label class="field full organization-name-field" hidden><span>Company or organization name *</span><input class="input" name="organizationName" maxlength="120" disabled></label>';
+}
+
+function syncOrganizationField(form){
+ const custom=form.elements.clubId.value==='new-organization';
+ form.querySelector('.organization-name-field').hidden=!custom;
+ form.elements.organizationName.disabled=!custom;
+ form.elements.organizationName.required=custom;
+}
+
+async function reloadLatestSaveForm(){
+ const target={page,club:selectedClub,interactionId:editingInteraction?.id,meetingId:meetingToComplete},request=++navigationRequest;
+ try{
+  await refreshWorkspace(request);if(request!==navigationRequest)return;
+  page=target.page;selectedClub=target.club;
+  editingInteraction=target.interactionId?db.interactions.find(item=>item.id===target.interactionId):null;
+  meetingToComplete=target.meetingId&&db.meetings.some(item=>item.id===target.meetingId&&item.status==='Planned')?target.meetingId:null;
+  if((target.interactionId&&!editingInteraction)||(target.meetingId&&!meetingToComplete)){page='clubs';app();toast('This record is no longer available to edit');return}
+  app();
+ }catch(error){if(request===navigationRequest)toast(error.message)}
+}
+async function persistInteractionChanges(form,previous){
+ const submit=form?.querySelector('button[type="submit"],button:not([type])'),epoch=accountEpoch;
+ form?.querySelector('[data-save-error]')?.remove();
+ if(submit)submit.disabled=true;
+ try{return await save()}
+ catch(error){
+  if(epoch!==accountEpoch)return false;
+  db=previous;
+  if(form){
+   const box=document.createElement('div');box.className='time-expense-error';box.dataset.saveError='';box.setAttribute('role','alert');box.textContent=error.message;
+   if(error.status===409){const reload=document.createElement('button');reload.type='button';reload.className='btn';reload.textContent='Reload latest data';reload.onclick=reloadLatestSaveForm;box.append(reload)}
+   form.append(box);
+  }
+  toast(error.message||'Unable to save this record');return false;
+ }finally{if(submit)submit.disabled=false}
+}
+
+function organizationForEntry(data){
+ const clubId=data.get('clubId');
+ if(clubId!=='new-organization')return canSeeClub(clubId)?clubBy(clubId):null;
+ if(!canCreateCompany())return null;
+ const name=String(data.get('organizationName')||'').trim();
+ return name&&name.length<=120?(findOrganization(name)||{id:'org-'+crypto.randomUUID(),name,league:'Other'}):null;
+}
+
 function interactionForm(prefill=''){
  const clubs=visibleClubs().slice().sort((a,b)=>a.name.localeCompare(b.name)),i=editingInteraction,scheduled=meetingToComplete?db.meetings.find(m=>m.id===meetingToComplete):null,planned=null,cId=prefill||i?.clubId||scheduled?.clubId||'';
  const stakeholder=(i?.stakeholders||[])[0]||{},participant=(i?.participants||[])[0]||{};
@@ -159,9 +278,10 @@ function interactionForm(prefill=''){
  +'<div class="form-wrap"><div id="club-history-slot">'+historyPreview(cId)+'</div><form class="card form-card" id="interaction-form">'
  +'<div class="form-section"><h3 class="form-section-title">01 &nbsp; Meeting details</h3><div class="form-grid">'
  +(!isEdit?'<div class="field"><label>What are you recording? *</label><select class="select" name="recordMode" id="record-mode"><option value="interaction">Completed interaction</option><option value="planned">Plan a meeting</option></select></div>':'')
- +'<div class="field"><label>Club *</label><select class="select" name="clubId" required><option value="">Select a club</option>'+clubOptions+'</select></div><div class="field"><label id="date-label">'+(planned?'Meeting date *':'Interaction date *')+'</label><input class="input" name="date" type="date" value="'+(i?.date||scheduled?.date||dt())+'" required></div><div class="field" id="planned-time-wrap" style="'+(planned?'':'display:none')+'"><label>Meeting time (optional)</label><input class="input" name="meetingTime" type="time" value="'+(scheduled?.time||'')+'"></div>'
+ +'<div class="field"><label>Club or organization *</label><select class="select" name="clubId" required><option value="">Select a club or organization</option>'+clubOptions+(canCreateCompany()?'<option value="new-organization">Other — enter a company name</option>':'')+'</select></div>'+organizationField()+'<div class="field"><label id="date-label">'+(planned?'Meeting date *':'Interaction date *')+'</label><input class="input" name="date" type="date" value="'+(i?.date||scheduled?.date||dt())+'" required></div><div class="field" id="planned-time-wrap" style="'+(planned?'':'display:none')+'"><label>Meeting time (optional)</label><input class="input" name="meetingTime" type="time" value="'+(scheduled?.time||'')+'"></div>'
  +'<div class="field" id="meeting-type-wrap" style="'+(planned?'':'display:none')+'"><label>Meeting type *</label><select class="select" name="meetingType" id="meeting-type"><option value="First meeting" '+((planned?.meetingType||'First meeting')==='First meeting'?'selected':'')+'>First meeting</option><option value="Follow-up meeting" '+(planned?.meetingType==='Follow-up meeting'?'selected':'')+'>Follow-up meeting</option></select></div>'
  +meetingCapabilityFields('plannedCapability',[],'planned-meeting-capabilities')
+ +'<label class="field" id="meeting-duration-field"><span>Actual meeting duration (minutes)'+(scheduled?' *':'')+'</span><input class="input" type="number" name="meetingMinutes" min="1" max="1440" step="1" value="'+(i?.meetingMinutes||'')+'" '+(scheduled?'required':'')+'></label>'
  +'<div class="field full"><label>Advisor / EXL POC *</label><div id="participant-rows"><div class="attendee-row poc-single"><input class="mini-input" name="participantName" placeholder="Advisor / EXL POC" value="'+esc(exlName)+'" required><input type="hidden" name="participantRole" value="EXL POC"></div></div></div>'
  +'<div class="field full"><label>Club/client POC *</label><div id="stakeholder-rows"><div class="attendee-row poc-pair"><input class="mini-input" name="stakeholderName" placeholder="Club/client point of contact" value="'+esc(clientName)+'" required><input class="mini-input" name="stakeholderRole" placeholder="Designation" value="'+esc(clientRole)+'" required></div></div></div>'
  +'<div class="field full"><label id="summary-label">'+(planned?'Meeting agenda *':'Discussion summary *')+'</label><textarea class="textarea" name="summary" required placeholder="'+(planned?'Describe the introductory meeting and what you plan to discuss.':'What did you discuss?')+'">'+esc(i?.summary||scheduled?.agenda||'')+'</textarea></div></div></div>'
@@ -195,9 +315,9 @@ function meetingSteps(meeting){const interaction=visibleInteractions().find(i=>i
 function calendarMeetingPanel(meetings){return meetings.length?meetings.map(m=>{const steps=meetingSteps(m);return `<article class="calendar-detail-meeting"><div class="calendar-detail-top"><div><strong>${esc(clubShort(clubBy(m.clubId)))}</strong><span>Meeting: ${fmt(m.date)} · ${esc(meetingTimeLabel(m.time))}</span><small>${esc(meetingTypeLabel(m.meetingType))}${m.clubPoc?' · '+esc(m.clubPoc):''}</small></div></div>${steps.length?`<div class="calendar-detail-steps"><small>FOLLOW-UP ACTIONS</small>${steps.map(f=>`<div class="calendar-detail-step"><span>${esc(f.description)}</span><span class="pill ${f.status==='Open'?'orange':f.status==='Done'?'green':'red'}">${esc(f.status)}${f.status==='Open'&&f.due<dt()?' · Overdue':''}</span>${followupControls(f)}</div>`).join('')}</div>`:'<div class="calendar-no-steps">No follow-up actions linked to this meeting.</div>'}</article>`}).join(''):'<div class="calendar-empty-day"><span>◷</span><strong>No meetings scheduled</strong><small>Select another date to review its meetings.</small></div>'}
 function calendarMarkup(){
  const year=calendarMonth.getFullYear(),month=calendarMonth.getMonth(),start=new Date(year,month,1),offset=(start.getDay()+6)%7,total=new Date(year,month+1,0).getDate(),slots=Math.ceil((offset+total)/7)*7;
- const meetings=visibleMeetings().filter(m=>m.date.slice(0,7)===`${year}-${String(month+1).padStart(2,'0')}`).sort((a,b)=>a.time.localeCompare(b.time));
+ const meetings=visibleMeetings().filter(m=>m.date.slice(0,7)===`${year}-${String(month+1).padStart(2,'0')}`).sort((a,b)=>(a.time||'').localeCompare(b.time||''));
  const days=Array.from({length:slots},(_,n)=>{const number=n-offset+1;if(number<1||number>total)return '<div class="calendar-day outside"></div>';const date=localDateKey(new Date(year,month,number)),items=meetings.filter(m=>m.date===date),events=items.slice(0,3).map(m=>`<span class="calendar-event"><b>${esc(clubShort(clubBy(m.clubId)))}</b><small>${esc(meetingTimeLabel(m.time))}</small></span>`).join('');return `<button type="button" class="calendar-day ${date===selectedCalendarDate?'selected':''} ${date===dt()?'today':''}" data-calendar-date="${date}" aria-pressed="${date===selectedCalendarDate}" aria-label="${fmt(date,{weekday:'long',month:'long',day:'numeric',year:'numeric'})}${items.length?': '+items.map(m=>clubShort(clubBy(m.clubId))+' at '+meetingTimeLabel(m.time)).join(', '):'; no meetings scheduled'}"><span class="calendar-day-number">${number}</span><span class="calendar-day-events">${events}${items.length>3?`<small class="calendar-more">+${items.length-3} more</small>`:''}</span></button>`}).join('');
- const selected=visibleMeetings().filter(m=>m.date===selectedCalendarDate).sort((a,b)=>a.time.localeCompare(b.time));
+ const selected=visibleMeetings().filter(m=>m.date===selectedCalendarDate).sort((a,b)=>(a.time||'').localeCompare(b.time||''));
  return `<section class="card follow-calendar-card"><div class="card-head calendar-heading"><div><div class="card-title">Meeting calendar</div></div><div class="calendar-month-switch"><button type="button" class="btn small" data-calendar-shift="-1" aria-label="Previous month">‹</button><strong>${start.toLocaleDateString('en-US',{month:'long',year:'numeric'})}</strong><button type="button" class="btn small" data-calendar-shift="1" aria-label="Next month">›</button></div></div><div class="calendar-layout"><div class="calendar-main"><div class="calendar-weekdays">${['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(d=>`<span>${d}</span>`).join('')}</div><div class="calendar-grid">${days}</div></div><aside class="calendar-day-panel"><div class="calendar-selected-date"><small>SELECTED DAY</small><strong>${fmt(selectedCalendarDate,{weekday:'long',month:'short',day:'numeric',year:'numeric'})}</strong></div><div class="calendar-selected-list">${calendarMeetingPanel(selected)}</div></aside></div></section>`
 }
 function followupsPage(){
@@ -217,6 +337,122 @@ function followupsPage(){
 }
 function followRows(rows){return rows.length?rows.map(f=>`<tr><td><div class="cell-title">${esc(f.description)}</div><div class="cell-sub">From ${fmt(f.interaction.date)} interaction</div></td><td><button class="action-link" data-open-club="${f.club?.id}">${esc(clubShort(f.club))}</button></td><td>${esc(who(f.owner))}</td><td>${fmt(f.due)} ${f.due<dt()&&f.status==='Open'?'<span class="pill red">Overdue</span>':''}</td><td><span class="pill ${f.status==='Open'?'orange':f.status==='Done'?'green':'red'}">${f.status}</span></td>${isStaff()?'':`<td>${followupControls(f)}</td>`}</tr>`).join(''):`<tr><td colspan="${isStaff()?5:6}"><div class="empty"><div class="empty-icon">✓</div>No next steps in this view.</div></td></tr>`}
 function followupCanEdit(f){return !isStaff()&&(f.owner===user().id||f.interaction.owner===user().id)}
+function nextMonthDate(date){const [year,month,day]=date.split('-').map(Number);const end=new Date(year,month+1,0);return localDateKey(new Date(year,month,Math.min(day,end.getDate())))}
+let contractAllowances=[];
+async function renderContracts(view){
+ view.innerHTML=head('','Contract terms','')+'<div class="empty" role="status">Loading contract terms…</div>';
+ try{const result=await timeExpenseRequest();if(page!=='contracts'||view!==$('#view'))return;contractAllowances=result.allowances||[];view.innerHTML=contractPage();bindFieldLabels(view);bindPage()}
+ catch(error){if(page==='contracts'&&view===$('#view')){view.innerHTML=head('','Contract terms','')+`<div class="empty" role="alert">${esc(error.message)}</div><button class="btn" data-page="contracts">Retry</button>`;bindPage()}}
+}
+function allowanceCards(balance){
+ if(!balance?.configured)return '<div class="empty">Contract terms have not been set.</div>';
+ return `<div class="allowance-grid">${[['Hourly rate',contractMoney(balance.hourlyRate)+' / hr'],['Hours logged',balance.hoursUsed+' h'],['Hours remaining',balance.hoursRemaining+' h'],['Amount logged',contractMoney(balance.amountUsed)],['Budget remaining',contractMoney(balance.amountRemaining)]].map(([label,value])=>`<div><span>${label}</span><strong>${esc(value)}</strong></div>`).join('')}</div>`;
+}
+let selectedAdvisorId=null,advisorMonth=localDateKey(new Date()).slice(0,7),advisorActivityMode='all',advisorActivityFrom='',advisorActivityTo='',advisorTimeEntries=[];
+function advisorBalance(id,month){
+ const saved=contractAllowances.find(balance=>balance.owner===id&&balance.month===month);
+ if(saved)return saved;
+ const contract=contractFor(id),first=contract?.sowStart?.slice(0,7)===month;
+ const cap=Number(contract?.[first?'firstMonthCap':'monthlyCap']??contract?.hoursCap??0),rate=Number(contract?.hourlyRate||0);
+ return {owner:id,month,configured:!!contract,hourlyRate:rate,hoursCap:cap,hoursUsed:'0.00',hoursRemaining:cap.toFixed(2),amountUsed:'0.00',amountRemaining:(cap*rate).toFixed(2)};
+}
+function contractTermDates(contract){
+ const term=(label,value)=>`<div><dt>${label}</dt><dd>${value?`<time datetime="${esc(value)}">${fmt(value)}</time>`:'Not set'}</dd></div>`;
+ return `<dl class="advisor-term-dates">${term('Term start',contract?.sowStart)}${term('Term end',contract?.sowEnd)}</dl>`;
+}
+function advisorInteractionItems(id,mode='all',from='',to=''){
+ return visibleInteractions().filter(item=>item.owner===id&&(mode==='all'||(from&&to&&from<=to&&item.date>=from&&item.date<=to))).sort((a,b)=>b.date.localeCompare(a.date)||String(a.id).localeCompare(String(b.id)));
+}
+function advisorCompanyGroups(id){
+ const groups=new Map();
+ for(const interaction of advisorInteractionItems(id)){
+  if(!groups.has(interaction.clubId))groups.set(interaction.clubId,[]);
+  groups.get(interaction.clubId).push(interaction);
+ }
+ return [...groups].sort((a,b)=>b[1][0].date.localeCompare(a[1][0].date));
+}
+function advisorHoursLogged(id){
+ return advisorTimeEntries.filter(entry=>entry.owner===id&&entry.kind==='time').reduce((total,entry)=>total+Number(entry.detail.hours||0),0).toFixed(2);
+}
+async function renderAdvisors(view){
+ if(!isStaff()){page='home';renderPage();return}
+ const requestedAdvisor=selectedAdvisorId;
+ view.innerHTML=head('','Advisors','')+'<div class="empty" role="status">Loading advisors…</div>';
+ try{
+  const [stateResponse,timeData]=await Promise.all([fetch('/api/state'),timeExpenseRequest()]);
+  const payload=await stateResponse.json();if(!stateResponse.ok||!payload.state)throw new Error(payload.error||'Could not load advisors');
+  if(page!=='advisors'||view!==$('#view')||requestedAdvisor!==selectedAdvisorId)return;
+  db=payload.state;if(!isStaff()){page='home';app();return}
+  contractAllowances=timeData.allowances||[];advisorTimeEntries=timeData.entries||[];
+  view.innerHTML=advisorsPage();bindFieldLabels(view);bindPage();bindAdvisors(view);
+ }catch(error){
+  if(page==='advisors'&&view===$('#view')&&requestedAdvisor===selectedAdvisorId){view.innerHTML=head('','Advisors','')+`<div class="empty" role="alert">${esc(error.message)}</div><button class="btn" data-page="advisors">Retry</button>`;bindPage()}
+ }
+}
+function advisorsPage(){
+ if(!isStaff())return '<div class="empty">Advisors is available to Admin and Sub-admin.</div>';
+ const people=db.users.filter(person=>person.role==='User').sort((a,b)=>a.name.localeCompare(b.name));
+ const person=people.find(item=>item.id===selectedAdvisorId);
+ if(person)return advisorDetailPage(person);
+ selectedAdvisorId=null;
+ return `${head('','Advisors','')}<div class="advisors-toolbar"><span class="advisor-list-count">${people.length} ${people.length===1?'advisor':'advisors'}</span><label class="advisor-search">Search advisors<input type="search" class="input" id="advisor-search" placeholder="Name or role" autocomplete="off"></label></div>
+ <div class="advisor-directory-grid">${people.map(person=>{
+  const contract=contractFor(person.id),groups=advisorCompanyGroups(person.id),balance=advisorBalance(person.id,localDateKey(new Date()).slice(0,7));
+  return `<button type="button" class="advisor-profile-card" data-open-advisor="${esc(person.id)}" data-advisor-search="${esc((person.name+' '+(person.title||'')).toLowerCase())}"><span class="advisor-card-identity"><span class="avatar">${esc(initials(person.name))}</span><span><strong>${esc(person.name)}</strong><small>${esc(person.title==='Internal POC'?'Advisor / EXL POC':person.title||'Advisor / EXL POC')}</small></span><span class="advisor-card-arrow" aria-hidden="true">→</span></span>${contractTermDates(contract)}<span class="advisor-card-metrics"><span><strong>${groups.length}</strong> companies contacted</span><span><strong>${advisorHoursLogged(person.id)} h</strong> logged · all time</span></span><span class="advisor-card-balance">${balance.configured?`${esc(balance.hoursRemaining)} h remaining this month`:'Contract terms not set'}</span></button>`;
+ }).join('')}</div><div class="empty" id="advisor-search-empty" role="status"${people.length?' hidden':''}>No advisors found.</div>`;
+}
+function advisorDetailPage(person){
+ const contract=contractFor(person.id),items=advisorInteractionItems(person.id),groups=advisorCompanyGroups(person.id);
+ const field=(label,value)=>value?`<div class="advisor-condition"><dt>${label}</dt><dd>${esc(value)}</dd></div>`:'';
+ const goals=contract?.deliverables||[];
+ return `<div class="advisor-detail-page"><header class="advisor-profile-head"><div><button type="button" class="action-link" id="advisor-back">← Advisors</button><div class="advisor-profile-identity"><span class="avatar">${esc(initials(person.name))}</span><div><h1 class="page-title">${esc(person.name)}</h1><p>${esc(person.title==='Internal POC'?'Advisor / EXL POC':person.title||'Advisor / EXL POC')}</p></div></div></div><div class="advisor-profile-totals"><span><strong>${groups.length}</strong> companies contacted</span><span><strong>${items.length}</strong> completed interactions</span><span><strong>${advisorHoursLogged(person.id)} h</strong> logged · all time</span></div></header>
+ <section class="card advisor-contract-strip" aria-label="Contract term">${contractTermDates(contract)}<div class="advisor-rate"><span>Hourly rate</span><strong>${contract?.hourlyRate!=null?esc(contractMoney(contract.hourlyRate))+' / hr':'Not set'}</strong></div>${contract?.status?`<span class="pill blue">${esc(contract.status)}</span>`:''}</section>
+ <section class="card advisor-monthly"><div class="card-head"><div><h2 class="card-title">Hours & budget</h2><div class="card-sub" id="advisor-monthly-cap"></div></div><label class="advisor-month-label">Month<input class="input" type="month" id="advisor-month" value="${esc(advisorMonth)}" required></label></div><div class="card-body" id="advisor-monthly-balance">${advisorMonthlyBalance(person.id)}</div></section>
+ <div class="advisor-contract-grid"><section class="card"><div class="card-head"><h2 class="card-title">Contract summary</h2><button class="action-link" id="advisor-view-contract" type="button">Full contract →</button></div><div class="card-body">${contract?`<dl class="advisor-conditions">${field('Scope of work',contract.scope)}${field('Terms & conditions',contract.conditions)}${field('Payment terms',contract.paymentTerms)}${field('Extra hours',contract.extraHours)}${field('Restrictions',contract.restrictions)||''}</dl>`:'<div class="empty">No contract terms recorded.</div>'}</div></section>
+ <section class="card"><div class="card-head"><h2 class="card-title">Goals</h2></div><div class="card-body">${goals.length?goals.map(goal=>{const progress=Math.max(0,Math.min(100,Math.round(Number(goal.actual||0)/Math.max(1,Number(goal.target||0))*100)));return `<div class="contract-progress-row"><div class="contract-progress-copy"><strong>${esc(goal.name)}</strong><span>${esc(goal.actual??0)} of ${esc(goal.target??0)}</span></div><div class="contract-progress-track" role="progressbar" aria-label="${esc(goal.name)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${progress}"><i style="width:${progress}%"></i></div></div>`}).join(''):'<div class="empty">No goals recorded.</div>'}</div></section></div>
+ <section class="card advisor-companies"><div class="card-head"><h2 class="card-title">Companies contacted</h2><span class="count-badge">${groups.length}</span></div><div class="card-body advisor-company-grid">${groups.map(([id,interactions])=>{const company=clubBy(id);return `<button class="advisor-company-card" type="button" data-open-club="${esc(id)}"><span class="advisor-company-mark">${esc(initials(company?.name||'Company'))}</span><span><strong>${esc(clubShort(company))}</strong><small>${esc(company?.league||'')} · ${interactions.length} ${interactions.length===1?'interaction':'interactions'}</small><small>Last interaction ${fmt(interactions[0].date)}</small></span><span aria-hidden="true">→</span></button>`}).join('')||'<div class="empty">No companies contacted yet.</div>'}</div></section>
+ <section class="card advisor-activity"><div class="card-head"><h2 class="card-title">Interaction activity</h2><label class="advisor-period-label">Period<select class="select" id="advisor-activity-period"><option value="all"${advisorActivityMode==='all'?' selected':''}>All activity</option><option value="range"${advisorActivityMode==='range'?' selected':''}>Date range</option></select></label></div>
+ <div class="advisor-date-range" id="advisor-date-range"${advisorActivityMode==='all'?' hidden':''}><label>From date<input class="input" type="date" id="advisor-activity-from" value="${esc(advisorActivityFrom)}"></label><label>To date<input class="input" type="date" id="advisor-activity-to" value="${esc(advisorActivityTo)}"></label></div>
+ <div class="time-expense-error advisor-filter-error" id="advisor-activity-error" role="alert"></div><div class="advisor-activity-count" id="advisor-activity-count" aria-live="polite"></div><div class="digest-list" id="advisor-activity-results">${digestRows(advisorInteractionItems(person.id,advisorActivityMode,advisorActivityFrom,advisorActivityTo))}</div></section></div>`;
+}
+function advisorMonthlyBalance(id){
+ const balance=advisorBalance(id,advisorMonth);
+ if(balance.configured)return allowanceCards(balance);
+ return `<div class="empty">Contract terms have not been set.</div><div class="advisor-unconfigured-hours"><strong>${esc(balance.hoursUsed)} h</strong> logged in this month</div>`;
+}
+function updateAdvisorActivity(view){
+ const error=view.querySelector('#advisor-activity-error');
+ const invalid=advisorActivityMode==='range'&&(!advisorActivityFrom||!advisorActivityTo||advisorActivityFrom>advisorActivityTo);
+ error.textContent=invalid?(!advisorActivityFrom||!advisorActivityTo?'Select both From date and To date.':'To date must be on or after From date.'):'';
+ const items=advisorInteractionItems(selectedAdvisorId,advisorActivityMode,advisorActivityFrom,advisorActivityTo);
+ view.querySelector('#advisor-activity-count').textContent=`${items.length} ${items.length===1?'interaction':'interactions'}`;
+ view.querySelector('#advisor-activity-results').innerHTML=invalid?'<div class="empty">Choose a valid date range.</div>':digestRows(items);
+}
+function bindAdvisors(view){
+ view.querySelectorAll('[data-open-advisor]').forEach(button=>button.onclick=()=>{selectedAdvisorId=button.dataset.openAdvisor;advisorMonth=localDateKey(new Date()).slice(0,7);advisorActivityMode='all';advisorActivityFrom='';advisorActivityTo='';renderPage()});
+ const search=view.querySelector('#advisor-search');
+ if(search)search.oninput=()=>{let count=0;const query=search.value.trim().toLowerCase();view.querySelectorAll('[data-open-advisor]').forEach(card=>{card.hidden=!card.dataset.advisorSearch.includes(query);if(!card.hidden)count++});view.querySelector('#advisor-search-empty').hidden=count>0};
+ view.querySelector('#advisor-back')?.addEventListener('click',()=>{selectedAdvisorId=null;renderPage()});
+ if(!selectedAdvisorId)return;
+ view.querySelector('#advisor-view-contract')?.addEventListener('click',()=>{selectedContractUser=selectedAdvisorId;editContractsMode=false;page='contracts';app()});
+ const month=view.querySelector('#advisor-month');
+ const updateMonth=()=>{
+  if(!/^\d{4}-\d{2}$/.test(month.value))return;
+  advisorMonth=month.value;const balance=advisorBalance(selectedAdvisorId,advisorMonth);
+  view.querySelector('#advisor-monthly-cap').textContent=balance.configured?`Monthly allowance: ${balance.hoursCap} h`:'';
+  view.querySelector('#advisor-monthly-balance').innerHTML=advisorMonthlyBalance(selectedAdvisorId);
+ };
+ month.addEventListener('change',updateMonth);updateMonth();
+ const period=view.querySelector('#advisor-activity-period'),from=view.querySelector('#advisor-activity-from'),to=view.querySelector('#advisor-activity-to');
+ period.onchange=()=>{
+  advisorActivityMode=period.value;view.querySelector('#advisor-date-range').hidden=advisorActivityMode==='all';
+  if(advisorActivityMode==='range'&&!from.value&&!to.value){const dates=advisorInteractionItems(selectedAdvisorId).map(item=>item.date);from.value=dates[dates.length-1]||localDateKey(new Date());to.value=dates[0]||localDateKey(new Date())}
+  advisorActivityFrom=from.value;advisorActivityTo=to.value;updateAdvisorActivity(view);
+ };
+ const filter=()=>{advisorActivityFrom=from.value;advisorActivityTo=to.value;updateAdvisorActivity(view)};
+ from.onchange=filter;to.onchange=filter;updateAdvisorActivity(view);
+}
+
 function digestPage(){
  const today=dt(),monthStart=new Date();monthStart.setDate(1);const start=monthStart.toISOString().slice(0,10);
  const ix=visibleInteractions();
@@ -227,11 +463,11 @@ function digestPage(){
   &&(league==='all'||clubBy(i.clubId)?.league===league)
   &&(advisor==='all'||exlPoc(i)===who(advisor))
   &&(cap==='all'||(i.capabilities||[]).includes(cap)));
- const meetings=visibleMeetings().filter(m=>m.date>=today).sort((a,b)=>a.date.localeCompare(b.date));
+ const meetings=visibleMeetings().filter(m=>m.date>=today&&m.date<=nextMonthDate(today)).sort((a,b)=>a.date.localeCompare(b.date));
  const dateField=(label,id,value)=>'<label class="filter-field"><span>'+label+'</span><input class="input" type="date" id="'+id+'" value="'+value+'"></label>';
  const selectField=(label,id,options,value)=>'<label class="filter-field"><span>'+label+'</span><select class="select" id="'+id+'">'+options.map(o=>'<option value="'+esc(o.value)+'" '+(o.value===value?'selected':'')+'>'+esc(o.label)+'</option>').join('')+'</select></label>';
- const leagueOptions=[{value:'all',label:'All leagues'},...Object.keys(LEAGUES).map(x=>({value:x,label:x}))];
- const clubOptions=[{value:'all',label:'All clubs'},...visibleClubs().map(c=>({value:c.id,label:c.name}))];
+ const leagueOptions=[{value:'all',label:'All leagues'},...[...Object.keys(LEAGUES),'Other'].map(x=>({value:x,label:x}))];
+ const clubOptions=[{value:'all',label:'All companies'},...visibleClubs().map(c=>({value:c.id,label:c.name}))];
  const userOptions=[{value:'all',label:isStaff()?'All users':'My records'},...(isStaff()?db.users.filter(u=>u.role==='User'):[user()]).map(u=>({value:u.id,label:u.name}))];
  const capOptions=[{value:'all',label:'All capabilities'},...CAPS.map(x=>({value:x,label:x}))];
  const actions='<button class="btn" id="clear-digest">Reset filters</button><button class="btn" id="export-digest">↓ &nbsp; Export CSV</button>'+(isStaff()?'':'<button class="btn primary" data-page="log">＋ &nbsp; Log interaction</button>');
@@ -245,11 +481,11 @@ function digestPage(){
  +selectField('Advisor / EXL POC','digest-advisor',userOptions,advisor)+selectField('Capability','digest-cap',capOptions,cap)
  +'</div></section>'
  +'<section class="overview-section"><div class="overview-section-heading"><div><div class="greeting">ACTIVITY SNAPSHOT</div><h2>Overview</h2><p>'+esc(fmt(from,{month:'short',day:'numeric',year:'numeric'}))+' – '+esc(fmt(to,{month:'short',day:'numeric',year:'numeric'}))+'</p></div></div>'
- +'<div class="stats-grid overview-stat-grid">'+stat('Completed interactions','In selected date range',filtered.length,'◉')+stat('Unique clubs','With interactions',new Set(filtered.map(i=>i.clubId)).size,'▦')+stat('Upcoming meetings','Planned from today',meetings.length,'◷')+'</div>'
+ +'<div class="stats-grid overview-stat-grid">'+stat('Completed interactions','In selected date range',filtered.length,'◉')+stat('Unique clubs','With interactions',new Set(filtered.map(i=>i.clubId)).size,'▦')+stat('Upcoming meetings','Next one month · '+fmt(today)+' – '+fmt(nextMonthDate(today)),meetings.length,'◷')+'</div>'
  +'<section class="card"><div class="card-head"><div><div class="card-title">Interaction activity</div></div>'+groups+'</div><div class="digest-list" id="digest-results">'+digestRows(filtered)+'</div></section></section>';
 }
-function exportDigestCSV(){const columns=['Club','League','Interaction date','Advisor / EXL POC','Club/client POC','Club designation','Discussion summary','Capabilities discussed','Other capability','Next meeting date','Next meeting time','Next-step status','Follow-up actions'];const cell=value=>{let text=String(value??'');if(/^[=+@\-\t\r]/.test(text))text='\''+text;return '"'+text.replace(/"/g,'""')+'"'};const rows=activeDigestItems.slice().sort((a,b)=>a.date.localeCompare(b.date)).map(i=>{const club=clubBy(i.clubId);const steps=(i.followups||[]).map(f=>`${f.description} [${f.status}; ${who(f.owner)}; action due ${f.due||'—'}]`).join(' | '),meeting=interactionNextMeeting(i);return [club?.name,club?.league,i.date,exlPoc(i),clubPoc(i),clubPocDesignation(i),i.summary,(i.capabilities||[]).join(', '),i.other,meeting?.date||'',meeting?.time||'',nextStepLabel(i),steps].map(cell).join(',')});const blob=new Blob(['\uFEFF'+[columns.map(cell).join(','),...rows].join('\r\n')],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`clubhouse-activity-${dt()}.csv`;document.body.append(a);a.click();a.remove();URL.revokeObjectURL(url);toast(`Exported ${rows.length} filtered interaction${rows.length===1?'':'s'}`)}
-function overviewFollowthrough(meetings){const tasks=allFollowups().filter(f=>f.status==='Open').sort((a,b)=>a.due.localeCompare(b.due));return '<div class="overview-followthrough"><section class="card upcoming-top"><div class="card-head"><div><div class="card-title">Upcoming meetings</div></div><span class="count-badge">'+meetings.length+'</span></div><div class="upcoming-strip scroll-list" tabindex="0" role="region" aria-label="Upcoming meetings">'+(meetings.length?meetings.map(meetingCard).join(''):'<div class="empty">No upcoming meetings are scheduled.</div>')+'</div></section><section class="card overview-next-card"><div class="card-head"><div><div class="card-title">Next steps</div></div><button class="link-btn" data-page="followups">All next steps →</button></div><div class="card-body scroll-list" tabindex="0" role="region" aria-label="Next steps">'+(tasks.length?tasks.map(taskCard).join(''):'<div class="empty">No open next steps.</div>')+'</div></section></div>'}
+function exportDigestCSV(){const columns=['Club','League','Interaction date','Advisor / EXL POC','Club/client POC','Club designation','Discussion summary','Capabilities discussed','Other capability','Next meeting date','Next meeting time','Next-step status','Follow-up actions'];const cell=value=>{let text=String(value??'');if(/^[=+@\-\t\r]/.test(text))text='\''+text;return '"'+text.replace(/"/g,'""')+'"'};const rows=activeDigestItems.slice().sort((a,b)=>a.date.localeCompare(b.date)).map(i=>{const club=clubBy(i.clubId);const steps=(i.followups||[]).map(f=>`${f.description} [${f.status}; ${who(f.owner)}; action due ${f.due||'—'}]`).join(' | '),meeting=interactionNextMeeting(i);return [club?.name,club?.league,i.date,exlPoc(i),clubPoc(i),clubPocDesignation(i),i.summary,(i.capabilities||[]).join(', '),i.other,meeting?.date||'',meeting?.time||'',nextStepLabel(i),steps].map(cell).join(',')});const blob=new Blob(['\uFEFF'+[columns.map(cell).join(','),...rows].join('\r\n')],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=`advisor-activity-${dt()}.csv`;document.body.append(a);a.click();a.remove();URL.revokeObjectURL(url);toast(`Exported ${rows.length} filtered interaction${rows.length===1?'':'s'}`)}
+function overviewFollowthrough(meetings){const tasks=allFollowups().filter(f=>f.status==='Open').sort((a,b)=>a.due.localeCompare(b.due));return '<div class="overview-followthrough"><section class="card upcoming-top"><div class="card-head"><div><div class="card-title">Upcoming meetings</div><div class="card-subtitle">Next one month · '+fmt(dt())+' – '+fmt(nextMonthDate(dt()))+'</div></div><span class="count-badge">'+meetings.length+'</span></div><div class="upcoming-strip scroll-list" tabindex="0" role="region" aria-label="Upcoming meetings">'+(meetings.length?meetings.map(meetingCard).join(''):'<div class="empty">No upcoming meetings are scheduled.</div>')+'</div></section><section class="card overview-next-card"><div class="card-head"><div><div class="card-title">Next steps</div></div><button class="link-btn" data-page="followups">All next steps →</button></div><div class="card-body scroll-list" tabindex="0" role="region" aria-label="Next steps">'+(tasks.length?tasks.map(taskCard).join(''):'<div class="empty">No open next steps.</div>')+'</div></section></div>'}
 function digestRows(ix){
  if(!ix.length)return '<div class="empty"><div class="empty-icon">◷</div>No interactions match these filters.</div>';
  return ix.slice().sort((a,b)=>b.date.localeCompare(a.date)).map(i=>{
@@ -266,15 +502,16 @@ function digestRows(ix){
 function contractDashboard(u,c){
  const stat=(label,value,note='')=>`<div class="contract-kpi"><small>${label}</small><strong>${value}</strong>${note?`<span>${note}</span>`:''}</div>`;
  const detail=(label,value)=>`<div class="contract-detail"><span>${label}</span><strong>${esc(value||'Not set')}</strong></div>`;
- const pct=Math.max(0,Math.min(100,Math.round((Number(c.hoursUsed||0)/Math.max(1,Number(c.hoursCap||1)))*100)));
+ const balance=contractAllowances.find(item=>item.owner===u.id&&item.month===dt().slice(0,7));
+ const pct=Math.max(0,Math.min(100,Math.round(Number(balance?.hoursUsed||0)/Math.max(1,Number(balance?.hoursCap||0))*100)));
  const deliverables=(c.deliverables||[]).map(x=>{const progress=Math.max(0,Math.min(100,Math.round(Number(x.actual||0)/Math.max(1,Number(x.target||1))*100)));return `<div class="contract-progress-row"><div class="contract-progress-copy"><strong>${esc(x.name)}</strong><span>${esc(x.actual)} of ${esc(x.target)} · ${progress}%</span></div><div class="contract-progress-track"><i style="width:${progress}%"></i></div></div>`}).join('');
  const compliance=(c.compliance||[]).map(x=>`<div class="contract-check-row"><div><strong>${esc(x.name)}</strong><small>${esc(x.detail||'')}</small></div><span class="pill ${x.status==='Complete'?'green':x.status==='In progress'?'orange':'blue'}">${esc(x.status)}</span></div>`).join('');
- return `<div class="contract-dashboard"><section class="contract-kpis">${stat('HOURLY RATE',`${contractMoney(c.hourlyRate)} / hr`)}${stat('MONTHLY CAP',`${esc(c.monthlyCap)} hrs`,`${contractMoney(Number(c.monthlyCap||0)*Number(c.hourlyRate||0))} cap value`)}${stat('TERM ENDS',fmt(c.sowEnd))}${stat('EXTENSION DEADLINE',fmt(c.extensionDeadline))}</section><div class="contract-dashboard-grid"><section class="card contract-dash-card"><div class="contract-section-head"><div><h2>Contract summary</h2><p>Who, when, and under what terms</p></div></div><div class="contract-detail-grid">${detail('Advisor / POC',u.name)}${detail('Role',c.role||u.title)}${detail('EXL contact',c.exlContact)}${detail('Agreement date',fmt(c.agreementDate))}${detail('SOW start',fmt(c.sowStart))}${detail('SOW end',fmt(c.sowEnd))}${detail('Location',c.location)}${detail('Governing law',c.governingLaw)}${detail('Payment terms',c.paymentTerms)}</div></section><section class="card contract-dash-card"><div class="contract-section-head"><div><h2>Key dates & deadlines</h2><p>Term milestones and commission window</p></div></div><div class="contract-timeline"><div><b>${fmt(c.sowStart)}</b><strong>Term begins</strong><small>Work and billing start</small></div><div><b>${fmt(c.extensionDeadline)}</b><strong>Extension deadline</strong><small>Written extension due</small></div><div><b>${fmt(c.sowEnd)}</b><strong>Term ends</strong><small>Six-month cap or SOW completion</small></div><div><b>${fmt(c.commissionWindowEnd)}</b><strong>Commission window closes</strong><small>Eligibility window closes</small></div></div><div class="contract-callout"><b>Recurring:</b> Timesheet due on the last day of each month → approval → invoice → payment within 30 days. Insurance must remain current through the term.</div></section><section class="card contract-dash-card"><div class="contract-section-head"><div><h2>Compensation</h2><p>Hourly retainer and expense rules</p></div></div><div class="contract-term-list">${detail('Hourly rate',`${contractMoney(c.hourlyRate)} / hr`)}${detail('Cap — first month',`${c.firstMonthCap} hrs (${contractMoney(Number(c.firstMonthCap||0)*Number(c.hourlyRate||0))})`)}${detail('Cap — each month after',`${c.monthlyCap} hrs (${contractMoney(Number(c.monthlyCap||0)*Number(c.hourlyRate||0))})`)}${detail('Extra hours',c.extraHours)}${detail('Timesheet due','Last day of month')}${detail('Payment terms',c.paymentTerms)}${detail('Travel & expenses',c.travelExpenses)}${detail('One-time incentive',`${contractMoney(c.oneTimeIncentive)} · first SOW in a new buying center`)}</div><div class="contract-usage"><div><strong>Hours used this month</strong><span>${esc(c.hoursUsed)} of ${esc(c.hoursCap)} hrs (${pct}%)</span></div><div class="contract-progress-track"><i style="width:${pct}%"></i></div></div></section><section class="card contract-dash-card"><div class="contract-section-head"><div><h2>New business commission</h2><p>Commission terms</p></div></div><div class="contract-commission-table"><div class="contract-commission-row heading"><span>TRIGGER</span><span>COMMISSION</span></div><div class="contract-commission-row"><span>New MSA · annual revenue above ${contractMoney(Number(c.largeMsaThreshold||0)*1000000)}</span><strong>${contractMoney(c.largeMsaCommission)}</strong></div><div class="contract-commission-row"><span>New MSA · other prospects</span><strong>${contractMoney(c.otherMsaCommission)}</strong></div><div class="contract-commission-row"><span>New SOW · months 1–12</span><strong>${esc(c.sowYearOnePercent)}% of revenue</strong></div><div class="contract-commission-row"><span>New SOW · months 13–24</span><strong>${esc(c.sowYearTwoPercent)}% of revenue</strong></div><div class="contract-commission-row"><span>First SOW in a new buying center</span><strong>${contractMoney(c.oneTimeIncentive)}</strong></div></div><div class="contract-callout">Commission eligibility depends on the signed agreement and approval process. Salesforce remains the source of truth for opportunities.</div></section><section class="card contract-dash-card"><div class="contract-section-head"><div><h2>Deliverables — target vs. actual</h2><p>Commitments for the full term</p></div></div><div class="contract-deliverables">${deliverables||'<div class="empty">No deliverables recorded.</div>'}</div></section><section class="card contract-dash-card"><div class="contract-section-head"><div><h2>Compliance & onboarding</h2><p>Must be completed before work starts and kept current</p></div></div><div class="contract-checklist">${compliance||'<div class="empty">No checklist items recorded.</div>'}</div></section><section class="card contract-dash-card contract-wide"><div class="contract-section-head"><div><h2>Scope, conditions & restrictions</h2><p>Responsibilities and continuing obligations</p></div></div><div class="contract-obligations"><div><small>SCOPE OF WORK</small><p>${esc(c.scope)}</p></div><div><small>TERMS & CONDITIONS</small><p>${esc(c.conditions)}</p></div><div><small>RESTRICTIONS & POST-EXIT OBLIGATIONS</small><p>${esc(c.restrictions)}</p></div></div></section></div></div>`
+ return `<div class="contract-dashboard"><section class="contract-kpis">${stat('HOURLY RATE',`${contractMoney(c.hourlyRate)} / hr`)}${stat('MONTHLY CAP',`${esc(balance?.hoursCap??c.monthlyCap)} hrs`,`${contractMoney(Number(balance?.hoursCap??c.monthlyCap??0)*Number(c.hourlyRate||0))} cap value`)}${stat('TERM ENDS',fmt(c.sowEnd))}${stat('EXTENSION DEADLINE',fmt(c.extensionDeadline))}</section><div class="contract-dashboard-grid"><section class="card contract-dash-card"><div class="contract-section-head"><div><h2>Contract summary</h2><p>Who, when, and under what terms</p></div></div><div class="contract-detail-grid">${detail('Advisor / POC',u.name)}${detail('Role',c.role||u.title)}${detail('EXL contact',c.exlContact)}${detail('Agreement date',fmt(c.agreementDate))}${detail('SOW start',fmt(c.sowStart))}${detail('SOW end',fmt(c.sowEnd))}${detail('Location',c.location)}${detail('Governing law',c.governingLaw)}${detail('Payment terms',c.paymentTerms)}</div></section><section class="card contract-dash-card"><div class="contract-section-head"><div><h2>Key dates & deadlines</h2><p>Term milestones and commission window</p></div></div><div class="contract-timeline"><div><b>${fmt(c.sowStart)}</b><strong>Term begins</strong><small>Work and billing start</small></div><div><b>${fmt(c.extensionDeadline)}</b><strong>Extension deadline</strong><small>Written extension due</small></div><div><b>${fmt(c.sowEnd)}</b><strong>Term ends</strong><small>Six-month cap or SOW completion</small></div><div><b>${fmt(c.commissionWindowEnd)}</b><strong>Commission window closes</strong><small>Eligibility window closes</small></div></div><div class="contract-callout"><b>Recurring:</b> Timesheet due on the last day of each month → CSV export → invoice → payment within 30 days. Insurance must remain current through the term.</div></section><section class="card contract-dash-card"><div class="contract-section-head"><div><h2>Compensation</h2><p>Hourly retainer and expense rules</p></div></div><div class="contract-term-list">${detail('Hourly rate',`${contractMoney(c.hourlyRate)} / hr`)}${detail('Cap — first month',`${c.firstMonthCap} hrs (${contractMoney(Number(c.firstMonthCap||0)*Number(c.hourlyRate||0))})`)}${detail('Cap — each month after',`${c.monthlyCap} hrs (${contractMoney(Number(c.monthlyCap||0)*Number(c.hourlyRate||0))})`)}${detail('Extra hours',c.extraHours)}${detail('Timesheet due','Last day of month')}${detail('Payment terms',c.paymentTerms)}${detail('Travel & expenses',c.travelExpenses)}${detail('One-time incentive',`${contractMoney(c.oneTimeIncentive)} · first SOW in a new buying center`)}</div>${allowanceCards(balance)}<div class="contract-usage"><div><strong>Hours used this month</strong><span>${esc(balance?.hoursUsed||0)} of ${esc(balance?.hoursCap||0)} hrs (${pct}%)</span></div><div class="contract-progress-track"><i style="width:${pct}%"></i></div></div></section><section class="card contract-dash-card"><div class="contract-section-head"><div><h2>New business commission</h2><p>Commission terms</p></div></div><div class="contract-commission-table"><div class="contract-commission-row heading"><span>TRIGGER</span><span>COMMISSION</span></div><div class="contract-commission-row"><span>New MSA · annual revenue above ${contractMoney(Number(c.largeMsaThreshold||0)*1000000)}</span><strong>${contractMoney(c.largeMsaCommission)}</strong></div><div class="contract-commission-row"><span>New MSA · other prospects</span><strong>${contractMoney(c.otherMsaCommission)}</strong></div><div class="contract-commission-row"><span>New SOW · months 1–12</span><strong>${esc(c.sowYearOnePercent)}% of revenue</strong></div><div class="contract-commission-row"><span>New SOW · months 13–24</span><strong>${esc(c.sowYearTwoPercent)}% of revenue</strong></div><div class="contract-commission-row"><span>First SOW in a new buying center</span><strong>${contractMoney(c.oneTimeIncentive)}</strong></div></div><div class="contract-callout">Commission eligibility depends on the signed agreement and approval process. Salesforce remains the source of truth for opportunities.</div></section><section class="card contract-dash-card"><div class="contract-section-head"><div><h2>Deliverables — target vs. actual</h2><p>Commitments for the full term</p></div></div><div class="contract-deliverables">${deliverables||'<div class="empty">No deliverables recorded.</div>'}</div></section><section class="card contract-dash-card"><div class="contract-section-head"><div><h2>Compliance & onboarding</h2><p>Must be completed before work starts and kept current</p></div></div><div class="contract-checklist">${compliance||'<div class="empty">No checklist items recorded.</div>'}</div></section><section class="card contract-dash-card contract-wide"><div class="contract-section-head"><div><h2>Scope, conditions & restrictions</h2><p>Responsibilities and continuing obligations</p></div></div><div class="contract-obligations"><div><small>SCOPE OF WORK</small><p>${esc(c.scope)}</p></div><div><small>TERMS & CONDITIONS</small><p>${esc(c.conditions)}</p></div><div><small>RESTRICTIONS & POST-EXIT OBLIGATIONS</small><p>${esc(c.restrictions)}</p></div></div></section></div></div>`
 }
 function contractEditorForm(u){
  const c=contractFor(u.id)||{},input=(label,key,type='text',step='')=>`<label class="contract-edit-field"><span>${label}</span><input class="input" name="${key}" type="${type}" value="${esc(c[key])}" ${type==='number'?`min="0" step="${step||'1'}"`:''}></label>`,area=(label,key,value='')=>`<label class="contract-edit-field contract-edit-wide"><span>${label}</span><textarea class="textarea" name="${key}">${esc(value||c[key]||'')}</textarea></label>`;
  const deliverableText=(c.deliverables||[]).map(x=>`${x.name} | ${x.target} | ${x.actual}`).join('\n'),checklistText=(c.compliance||[]).map(x=>`${x.name} | ${x.status} | ${x.detail}`).join('\n');
- return `<form class="card contract-edit-form" data-contract-user="${esc(u.id)}"><div class="card-head"><div><div class="card-title">Edit terms · ${esc(u.name)}</div></div><button class="btn" type="button" data-contract-cancel>Cancel</button></div><div class="contract-edit-section"><h2>Contract summary & dates</h2><div class="contract-edit-grid">${input('Agreement type','agreementType')}${input('Status','status')}${input('Role','role')}${input('EXL contact','exlContact')}${input('Agreement date','agreementDate','date')}${input('SOW start','sowStart','date')}${input('SOW end','sowEnd','date')}${input('Extension deadline','extensionDeadline','date')}${input('Commission window end','commissionWindowEnd','date')}${input('Location','location')}${input('Governing law','governingLaw')}${input('Payment terms','paymentTerms')}</div></div><div class="contract-edit-section"><h2>Compensation & commission rules</h2><div class="contract-edit-grid">${input('Hourly rate ($)','hourlyRate','number','0.01')}${input('First month cap (hours)','firstMonthCap','number')}${input('Monthly cap after first month (hours)','monthlyCap','number')}${input('Extra hours approval','extraHours')}${input('Travel & expenses','travelExpenses')}${input('One-time incentive ($)','oneTimeIncentive','number')}${input('Large MSA threshold ($M)','largeMsaThreshold','number')}${input('Large MSA commission ($)','largeMsaCommission','number')}${input('Other MSA commission ($)','otherMsaCommission','number')}${input('SOW commission · months 1–12 (%)','sowYearOnePercent','number','0.1')}${input('SOW commission · months 13–24 (%)','sowYearTwoPercent','number','0.1')}${input('Hours used this month','hoursUsed','number','0.1')}${input('Monthly tracked hours cap','hoursCap','number','0.1')}</div></div><div class="contract-edit-section"><h2>Deliverables & compliance</h2><div class="contract-edit-grid">${area('Deliverables · one per line: name | target | actual','deliverablesText',deliverableText)}${area('Compliance checklist · one per line: item | status | note','complianceText',checklistText)}</div></div><div class="contract-edit-section"><h2>Scope & obligations</h2><div class="contract-edit-grid">${area('Scope of work','scope')}${area('Terms and conditions','conditions')}${area('Restrictions & post-exit obligations','restrictions')}</div></div><div class="contract-save-row"><span>Saving makes these terms visible to this person.</span><button class="btn primary" type="submit">Save contract terms</button></div></form>`
+ return `<form class="card contract-edit-form" data-contract-user="${esc(u.id)}"><div class="card-head"><div><div class="card-title">Edit terms · ${esc(u.name)}</div></div><button class="btn" type="button" data-contract-cancel>Cancel</button></div><div class="contract-edit-section"><h2>Contract summary & dates</h2><div class="contract-edit-grid">${input('Agreement type','agreementType')}${input('Status','status')}${input('Role','role')}${input('EXL contact','exlContact')}${input('Agreement date','agreementDate','date')}${input('SOW start','sowStart','date')}${input('SOW end','sowEnd','date')}${input('Extension deadline','extensionDeadline','date')}${input('Commission window end','commissionWindowEnd','date')}${input('Location','location')}${input('Governing law','governingLaw')}${input('Payment terms','paymentTerms')}</div></div><div class="contract-edit-section"><h2>Compensation & commission rules</h2><div class="contract-edit-grid">${input('Hourly rate ($)','hourlyRate','number','0.01')}${input('First month cap (hours)','firstMonthCap','number')}${input('Monthly cap after first month (hours)','monthlyCap','number')}${input('Extra hours approval','extraHours')}${input('Travel & expenses','travelExpenses')}${input('One-time incentive ($)','oneTimeIncentive','number')}${input('Large MSA threshold ($M)','largeMsaThreshold','number')}${input('Large MSA commission ($)','largeMsaCommission','number')}${input('Other MSA commission ($)','otherMsaCommission','number')}${input('SOW commission · months 1–12 (%)','sowYearOnePercent','number','0.1')}${input('SOW commission · months 13–24 (%)','sowYearTwoPercent','number','0.1')}</div></div><div class="contract-edit-section"><h2>Deliverables & compliance</h2><div class="contract-edit-grid">${area('Deliverables · one per line: name | target | actual','deliverablesText',deliverableText)}${area('Compliance checklist · one per line: item | status | note','complianceText',checklistText)}</div></div><div class="contract-edit-section"><h2>Scope & obligations</h2><div class="contract-edit-grid">${area('Scope of work','scope')}${area('Terms and conditions','conditions')}${area('Restrictions & post-exit obligations','restrictions')}</div></div><div class="contract-save-row"><span>Saving makes these terms visible to this person.</span><button class="btn primary" type="submit">Save contract terms</button></div></form>`
 }
 function contractPage(){
 
@@ -285,11 +522,109 @@ function contractPage(){
  }
  const terms=contractFor(user().id);return `${head('MY WORKSPACE','My contract terms','Review the agreement details and conditions recorded for your profile.')}${terms?contractDashboard(user(),terms):'<section class="card contract-empty"><div class="empty"><h2>No contract terms available</h2><p>Your administrator has not added approved terms for your profile yet.</p></div></section>'}`
 }
-function adminPage(){if(!isStaff()){page='home';return homePage()}return `${head('WORKSPACE ADMIN','Workspace users','Anyone in the Advisor / EXL POC role can work with any club. Interaction and next-step editing follows record ownership.','')}<div class="admin-grid"><section class="card"><div class="card-head"><div><div class="card-title">Workspace users</div></div></div><div class="card-body">${db.users.map(u=>`<div class="admin-user"><div><div class="cell-title">${esc(u.name)}</div><div class="cell-sub">${esc(u.title==='Internal POC'?'Advisor / EXL POC':u.title)}</div></div><span class="pill ${u.role==='Admin'?'blue':'green'}">${u.role}</span></div>`).join('')}</div></section></div>`}
-function openClub(id){selectedClub=id;clubTab='history';page='club';app()}
-function bindPage(){document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{page=b.dataset.page;editingInteraction=null;app()});document.querySelectorAll('[data-log-club]').forEach(b=>b.onclick=()=>{editingInteraction=null;page='log';app();const s=document.querySelector('[name=clubId]');if(s){s.value=b.dataset.logClub;s.dispatchEvent(new Event('change'))}});const view=$('#view');if(view)view.onclick=e=>{const follow=e.target.closest('[data-follow-status]');if(follow){if(follow.disabled)return;if(follow.dataset.next==='Canceled'&&!confirm('Cancel this follow-up action?'))return;follow.disabled=true;follow.textContent='Saving…';changeFollowup(follow.dataset.followStatus,follow.dataset.next);return}const clubButton=e.target.closest('[data-open-club]');if(clubButton){e.preventDefault();openClub(clubButton.dataset.openClub)}};const logoRoot=$('#club-results');logoRoot?.addEventListener('error',e=>{if(e.target.matches('.club-logo-img'))e.target.remove()},true);
- const cs=$('#club-search'),lf=$('#league-filter');if(cs||lf){const filter=()=>{const term=(cs?.value||'').toLowerCase(),league=lf?.value||'all',results=$('#club-results');results.innerHTML=clubCards(visibleClubs().filter(c=>c.name.toLowerCase().includes(term)&&(league==='all'||c.league===league)))};cs?.addEventListener('input',filter);lf?.addEventListener('change',filter)}
- document.querySelectorAll('[data-contract-user]').forEach(form=>form.onsubmit=e=>{e.preventDefault();if(!isAdmin())return;const fd=new FormData(form),id=form.dataset.contractUser,number=k=>Number(fd.get(k)||0),rows=k=>contractRows(fd.get(k)).filter(r=>r[0]);db.contracts||={};db.contracts[id]={agreementType:String(fd.get('agreementType')||'').trim(),status:String(fd.get('status')||'').trim(),role:String(fd.get('role')||'').trim(),exlContact:String(fd.get('exlContact')||'').trim(),agreementDate:fd.get('agreementDate'),sowStart:fd.get('sowStart'),sowEnd:fd.get('sowEnd'),extensionDeadline:fd.get('extensionDeadline'),commissionWindowEnd:fd.get('commissionWindowEnd'),location:String(fd.get('location')||'').trim(),governingLaw:String(fd.get('governingLaw')||'').trim(),paymentTerms:String(fd.get('paymentTerms')||'').trim(),hourlyRate:number('hourlyRate'),firstMonthCap:number('firstMonthCap'),monthlyCap:number('monthlyCap'),extraHours:String(fd.get('extraHours')||'').trim(),travelExpenses:String(fd.get('travelExpenses')||'').trim(),oneTimeIncentive:number('oneTimeIncentive'),largeMsaThreshold:number('largeMsaThreshold'),largeMsaCommission:number('largeMsaCommission'),otherMsaCommission:number('otherMsaCommission'),sowYearOnePercent:number('sowYearOnePercent'),sowYearTwoPercent:number('sowYearTwoPercent'),hoursUsed:number('hoursUsed'),hoursCap:number('hoursCap'),deliverables:rows('deliverablesText').map(([name,target,actual])=>({name,target:Number(target)||0,actual:Number(actual)||0})),compliance:rows('complianceText').map(([name,status,detail])=>({name,status,detail})),scope:String(fd.get('scope')||'').trim(),conditions:String(fd.get('conditions')||'').trim(),restrictions:String(fd.get('restrictions')||'').trim(),updatedAt:dt()};save();editContractsMode=false;app();toast('Contract terms saved for '+(db.users.find(u=>u.id===id)?.name||'user'))});
+let selectedCompanyAdvisor='';
+function companyAccessEditor(people){
+ if(!people.some(person=>person.id===selectedCompanyAdvisor))selectedCompanyAdvisor=people[0]?.id||'';
+ if(!selectedCompanyAdvisor)return '';
+ const access=companyAccessFor(selectedCompanyAdvisor),selected=new Set(access.companyIds);
+ const companies=db.clubs.slice().sort((a,b)=>a.league.localeCompare(b.league)||a.name.localeCompare(b.name));
+ return `<section class="card company-access-card"><div class="card-head"><h2 class="card-title">Company access</h2></div>
+ <form id="access-new-company" hidden></form>
+ <form id="company-access-form" class="card-body">
+ <label class="access-advisor-field">Advisor / EXL POC<select class="select" id="access-advisor">${people.map(person=>`<option value="${esc(person.id)}"${person.id===selectedCompanyAdvisor?' selected':''}>${esc(person.name)}</option>`).join('')}</select></label>
+ <fieldset class="access-mode"><legend>Access</legend>${[['all','All companies'],['selected','Selected companies']].map(([value,label])=>`<label><input type="radio" name="accessMode" value="${value}"${access.mode===value?' checked':''}>${label}</label>`).join('')}</fieldset>
+ <section id="access-company-picker"${access.mode==='all'?' hidden':''}>
+ <div class="access-picker-toolbar"><label class="access-search">Search companies<input class="input" type="search" id="access-company-search" placeholder="Company or league" autocomplete="off"></label><span id="access-selected-count" aria-live="polite"></span></div>
+ <div class="access-picker-actions"><button class="action-link" type="button" id="access-select-visible">Select visible</button><button class="action-link" type="button" id="access-clear">Clear selection</button><button class="action-link" type="button" id="access-add-company" aria-expanded="false" aria-controls="access-new-company-panel">＋ Add New Company</button></div>
+ <div id="access-new-company-panel" class="access-new-company" hidden><h3>Add New Company</h3><label>Company name<input class="input" name="companyName" form="access-new-company" maxlength="120" required autocomplete="organization"></label><div class="access-new-company-recipient">Advisor / EXL POC: <strong>${esc(people.find(person=>person.id===selectedCompanyAdvisor)?.name||'')}</strong><span class="pill blue">Other</span></div><div class="form-actions"><button class="btn" type="button" id="access-new-company-cancel">Cancel</button><button class="btn primary" type="submit" form="access-new-company">Add company</button></div><div class="time-expense-error" role="alert"></div></div>
+ <div class="access-company-list">${companies.map(company=>`<label class="access-company-option"><input type="checkbox" name="accessCompany" value="${esc(company.id)}"${selected.has(company.id)?' checked':''}><span><strong>${esc(company.name)}</strong><small>${esc(company.league)}</small></span></label>`).join('')}</div><p id="access-search-empty" class="empty" hidden>No companies found.</p></section>
+ <div class="form-actions"><button class="btn primary" type="submit" id="access-save">Save company access</button></div><div class="time-expense-error" id="access-save-error" role="alert"></div></form></section>`;
+}
+function adminPage(){
+ if(!isStaff()){page='home';return homePage()}
+ const people=db.users.filter(person=>person.role==='User');
+ return `${head('ADMINISTRATION','Workspace users','','')}<div class="workspace-access-grid"><section class="card"><div class="card-head"><h2 class="card-title">Workspace users</h2></div><div class="card-body">${db.users.map(person=>{
+ const access=companyAccessFor(person.id),advisor=person.role==='User';
+ return `<div class="admin-user"><div><div class="cell-title">${esc(person.name)}</div><div class="cell-sub">${esc(person.title==='Internal POC'?'Advisor / EXL POC':person.title)}</div>${advisor?`<div class="access-summary">${access.mode==='all'?'All companies':access.companyIds.length+' companies'}${isAdmin()?`<button class="action-link" type="button" data-edit-company-access="${esc(person.id)}">Edit access</button>`:''}</div>${!isAdmin()&&access.mode==='selected'?`<details class="access-readonly"><summary>View companies</summary><ul>${access.companyIds.map(id=>`<li>${esc(clubBy(id)?.name||'Company unavailable')}</li>`).join('')||'<li>No companies selected</li>'}</ul></details>`:''}`:''}</div><span class="pill ${person.role==='Admin'?'blue':'green'}">${esc(person.role)}</span></div>`;
+ }).join('')}</div></section>${isAdmin()?companyAccessEditor(people):''}</div>`;
+}
+function bindCompanyAccess(){
+ document.querySelectorAll('[data-edit-company-access]').forEach(button=>button.onclick=()=>{selectedCompanyAdvisor=button.dataset.editCompanyAccess;renderPage();$('#access-advisor')?.focus()});
+ const form=$('#company-access-form');if(!form||!isAdmin())return;
+ bindAddCompany(form);
+ $('#access-advisor').onchange=event=>{selectedCompanyAdvisor=event.target.value;renderPage()};
+ const picker=$('#access-company-picker'),boxes=[...form.querySelectorAll('[name=accessCompany]')];
+ const updateCount=()=>{$('#access-selected-count').textContent=boxes.filter(box=>box.checked).length+' selected'};
+ form.querySelectorAll('[name=accessMode]').forEach(input=>input.onchange=()=>{picker.hidden=form.elements.accessMode.value==='all';if(picker.hidden){$('#access-new-company-panel').hidden=true;$('#access-add-company').setAttribute('aria-expanded','false')}});
+ const filter=()=>{const query=$('#access-company-search').value.trim().toLowerCase();let count=0;boxes.forEach(box=>{const label=box.closest('label');label.hidden=!label.textContent.toLowerCase().includes(query);if(!label.hidden)count++});$('#access-search-empty').hidden=count>0};
+ $('#access-company-search').oninput=filter;
+ boxes.forEach(box=>box.onchange=updateCount);
+ $('#access-select-visible').onclick=()=>{boxes.filter(box=>!box.closest('label').hidden).forEach(box=>box.checked=true);updateCount()};
+ $('#access-clear').onclick=()=>{boxes.forEach(box=>box.checked=false);updateCount()};
+ updateCount();
+ form.onsubmit=async event=>{
+  event.preventDefault();const button=$('#access-save'),error=$('#access-save-error');button.disabled=true;error.textContent='';
+  const advisorId=$('#access-advisor').value,mode=form.elements.accessMode.value,epoch=accountEpoch;
+  try{
+   const response=await fetch('/api/company-access',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({advisorId,mode,companyIds:mode==='selected'?boxes.filter(box=>box.checked).map(box=>box.value):[],revision:companyAccessFor(advisorId).revision})});
+   const result=await response.json();if(epoch!==accountEpoch)return;if(!response.ok)throw new Error(result.error||'Could not save company access');
+   db=result.state;clearWorkspaceCache();
+   if(page==='admin'){app();toast('Company access saved')}
+  }catch(problem){error.textContent=problem.message}finally{button.disabled=false}
+ };
+}
+function bindAddCompany(accessForm){
+ const form=$('#access-new-company'),panel=$('#access-new-company-panel'),toggle=$('#access-add-company');if(!form||!panel||!toggle)return;
+ const setOpen=open=>{panel.hidden=!open;toggle.setAttribute('aria-expanded',String(open));if(open)form.elements.companyName.focus();else toggle.focus()};
+ toggle.onclick=()=>setOpen(panel.hidden);
+ $('#access-new-company-cancel').onclick=()=>setOpen(false);
+ form.onsubmit=async event=>{
+  event.preventDefault();
+  const advisorId=$('#access-advisor').value,name=form.elements.companyName.value.trim(),epoch=accountEpoch;
+  const draft={mode:accessForm.elements.accessMode.value,ids:[...accessForm.querySelectorAll('[name=accessCompany]:checked')].map(input=>input.value)};
+  const error=panel.querySelector('[role=alert]');error.textContent='';
+  const controls=[...panel.querySelectorAll('input,button'),...accessForm.querySelectorAll('input,select,button')];controls.forEach(control=>control.disabled=true);
+  try{
+   const response=await fetch('/api/companies',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({advisorId,name,revision:companyAccessFor(advisorId).revision})});
+   const result=await response.json();if(epoch!==accountEpoch)return;if(!response.ok)throw new Error(result.error||'Could not add this company');
+   db=result.state;clearWorkspaceCache();
+   if(page==='admin'){
+    app();
+    // Preserve pending checkbox edits; adding a company does not submit those edits.
+    const current=$('#company-access-form');
+    if(current&&$('#access-advisor').value===advisorId){
+     const radio=current.querySelector(`[name=accessMode][value="${draft.mode}"]`);radio.checked=true;radio.onchange();
+     current.querySelectorAll('[name=accessCompany]').forEach(input=>{input.checked=draft.ids.includes(input.value)||input.value===result.company.id});
+     current.querySelector('[name=accessCompany]')?.onchange();
+    }
+    toast('Company added under Other');
+   }
+  }catch(problem){error.textContent=problem.message}finally{controls.forEach(control=>control.disabled=false)}
+ };
+}
+async function openClub(id){
+ const request=++navigationRequest;
+ try{await refreshWorkspace(request);if(request!==navigationRequest)return;if(!canSeeClub(id)){page='clubs';app();toast('This company is not available in your CME directory');return}selectedClub=id;clubTab='history';page='club';app()}
+ catch(error){if(request===navigationRequest)toast(error.message)}
+}
+function bindPage(){bindCompanyAccess();document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>navigateToPage(b.dataset.page));document.querySelectorAll('[data-log-club]').forEach(b=>b.onclick=()=>{editingInteraction=null;page='log';app();const s=document.querySelector('[name=clubId]');if(s){s.value=b.dataset.logClub;s.dispatchEvent(new Event('change'))}});const view=$('#view');if(view)view.onclick=e=>{const follow=e.target.closest('[data-follow-status]');if(follow){if(follow.disabled)return;if(follow.dataset.next==='Canceled'&&!confirm('Cancel this follow-up action?'))return;follow.disabled=true;follow.textContent='Saving…';changeFollowup(follow.dataset.followStatus,follow.dataset.next);return}const clubButton=e.target.closest('[data-open-club]');if(clubButton){e.preventDefault();openClub(clubButton.dataset.openClub)}};const logoRoot=$('#club-results');logoRoot?.addEventListener('error',e=>{if(e.target.matches('.club-logo-img'))e.target.remove()},true);
+ document.querySelectorAll('[data-directory-league]').forEach(button=>button.onclick=()=>{directoryLeague=button.dataset.directoryLeague;renderPage();document.querySelector('[data-directory-league][aria-pressed="true"]')?.focus()});
+ const search=$('#club-search');
+ search?.addEventListener('input',()=>{$('#club-results').innerHTML=clubCards(visibleClubs().filter(club=>club.league===directoryLeague&&club.name.toLowerCase().includes(search.value.trim().toLowerCase())))});
+ const directoryForm=$('#directory-organization');
+ if(directoryForm)directoryForm.onsubmit=event=>{
+  event.preventDefault();
+  const name=directoryForm.elements.organizationName.value.trim();
+  if(!name)return;
+  editingInteraction=null;meetingToComplete=null;page='log';app();
+  const form=$('#interaction-form');
+  const existing=findOrganization(name);
+  form.elements.clubId.value=existing?.id||'new-organization';
+  form.elements.organizationName.value=existing?'':name;
+  form.elements.clubId.dispatchEvent(new Event('change'));
+ };
+
+ document.querySelectorAll('[data-contract-user]').forEach(form=>form.onsubmit=async e=>{e.preventDefault();if(!isAdmin())return;const previous=structuredClone(db);const fd=new FormData(form),id=form.dataset.contractUser,number=k=>Number(fd.get(k)||0),rows=k=>contractRows(fd.get(k)).filter(r=>r[0]);db.contracts||={};db.contracts[id]={agreementType:String(fd.get('agreementType')||'').trim(),status:String(fd.get('status')||'').trim(),role:String(fd.get('role')||'').trim(),exlContact:String(fd.get('exlContact')||'').trim(),agreementDate:fd.get('agreementDate'),sowStart:fd.get('sowStart'),sowEnd:fd.get('sowEnd'),extensionDeadline:fd.get('extensionDeadline'),commissionWindowEnd:fd.get('commissionWindowEnd'),location:String(fd.get('location')||'').trim(),governingLaw:String(fd.get('governingLaw')||'').trim(),paymentTerms:String(fd.get('paymentTerms')||'').trim(),hourlyRate:number('hourlyRate'),firstMonthCap:number('firstMonthCap'),monthlyCap:number('monthlyCap'),extraHours:String(fd.get('extraHours')||'').trim(),travelExpenses:String(fd.get('travelExpenses')||'').trim(),oneTimeIncentive:number('oneTimeIncentive'),largeMsaThreshold:number('largeMsaThreshold'),largeMsaCommission:number('largeMsaCommission'),otherMsaCommission:number('otherMsaCommission'),sowYearOnePercent:number('sowYearOnePercent'),sowYearTwoPercent:number('sowYearTwoPercent'),deliverables:rows('deliverablesText').map(([name,target,actual])=>({name,target:Number(target)||0,actual:Number(actual)||0})),compliance:rows('complianceText').map(([name,status,detail])=>({name,status,detail})),scope:String(fd.get('scope')||'').trim(),conditions:String(fd.get('conditions')||'').trim(),restrictions:String(fd.get('restrictions')||'').trim(),updatedAt:dt()};if(!await persistInteractionChanges(form,previous))return;editContractsMode=false;app();toast('Contract terms saved for '+(db.users.find(u=>u.id===id)?.name||'user'))});
  $('#contract-user-select')?.addEventListener('change',e=>{selectedContractUser=e.target.value;editContractsMode=false;app()});document.querySelectorAll('[data-contract-edit]').forEach(b=>b.onclick=()=>{editContractsMode=true;app()});document.querySelectorAll('[data-contract-cancel]').forEach(b=>b.onclick=()=>{editContractsMode=false;app()});
  document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{clubTab=b.dataset.tab;renderPage()});
  document.querySelectorAll('[data-add-row]').forEach(b=>b.onclick=()=>{const kind=b.dataset.addRow,holder=$(`#${kind==='followup'?'followup-rows':kind==='stakeholder'?'stakeholder-rows':'participant-rows'}`);holder.insertAdjacentHTML('beforeend',kind==='followup'?followRow({description:'',owner:user().id,due:'',status:'Open'}):attendeeRow({name:'',role:''},kind))});document.querySelectorAll('[data-remove-row]').forEach(b=>b.onclick=()=>{const row=b.parentElement;const parent=row.parentElement;if(parent.children.length>1)row.remove();else row.querySelectorAll('input').forEach(i=>i.value='')});
@@ -303,6 +638,14 @@ function bindPage(){document.querySelectorAll('[data-page]').forEach(b=>b.onclic
   syncMeetingCapabilities(form);
  });
  syncMeetingCapabilities(form);
+ const syncEntryFields=()=>{
+  syncOrganizationField(form);
+  const duration=form.elements.meetingMinutes;
+  duration.disabled=form.elements.recordMode?.value==='planned';
+  $('#meeting-duration-field').hidden=duration.disabled;
+ };
+ form.addEventListener('change',syncEntryFields);
+ syncEntryFields();
 }document.querySelector('[name=clubId]')?.addEventListener('change',e=>{$('#club-history-slot').innerHTML=historyPreview(e.target.value)});
  document.querySelectorAll('[data-followup-range]').forEach(b=>b.onclick=()=>{followupRange=b.dataset.followupRange;const select=$('#follow-status-filter');if(select)select.value='Open';renderPage()});document.querySelectorAll('[data-calendar-date]').forEach(b=>b.onclick=()=>{selectedCalendarDate=b.dataset.calendarDate;renderPage()});document.querySelectorAll('[data-calendar-shift]').forEach(b=>b.onclick=()=>{const shift=Number(b.dataset.calendarShift);calendarMonth=new Date(calendarMonth.getFullYear(),calendarMonth.getMonth()+shift,1);selectedCalendarDate=localDateKey(new Date(calendarMonth.getFullYear(),calendarMonth.getMonth(),1));renderPage()});
  $('#follow-status-filter')?.addEventListener('change',()=>{followupRange='all';renderPage()});
@@ -329,28 +672,47 @@ async function changeFollowup(id,status){
  if(isStaff())return;
  const found=allFollowups().find(f=>f.id===id&&followupCanEdit(f));
  if(!found){renderPage();toast('This action is no longer available.');return}
+ const epoch=accountEpoch;
  try{
   const response=await fetch('/api/followup',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({interactionId:found.interaction.id,followupId:id,status})});
   const result=await response.json();
+  if(epoch!==accountEpoch)return;
   if(!response.ok)throw new Error(result.error||'Could not update this action');
   const action=db.interactions.find(i=>i.id===found.interaction.id)?.followups?.find(f=>f.id===id)||(db.assignedFollowups||[]).find(f=>f.id===id);
   if(action)action.status=status;
+  if(result.interactionVersion&&db.interactions.some(item=>item.id===found.interaction.id)){db.recordVersions||={};db.recordVersions.interactions||={};db.recordVersions.interactions[found.interaction.id]=result.interactionVersion}
   renderPage();
   toast(status==='Open'?'Action reopened':`Action marked ${status.toLowerCase()}`);
  }catch(error){renderPage();toast(error.message||'Could not update this action')}
 }
 function meetingModal(id=''){
- const m=db.meetings.find(x=>x.id===id);if(isStaff()||(m&&m.owner!==user().id))return;
- const content=`<div class="modal-backdrop" id="modal-backdrop"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="meeting-modal-title"><div class="modal-head"><div class="modal-title" id="meeting-modal-title">${m?'Edit planned meeting':'Plan a meeting'}</div><button class="close" data-close aria-label="Close dialog">×</button></div><form class="modal-body" id="meeting-form"><div class="form-grid"><div class="field"><label>Club *</label><select class="select" name="clubId" required>${visibleClubs().map(c=>`<option value="${c.id}" ${c.id===(m?.clubId||selectedClub)?'selected':''}>${esc(c.name)} · ${c.league}</option>`).join('')}</select></div><div class="field"><label>Meeting date *</label><input class="input" type="date" name="date" value="${m?.date||''}" required></div><div class="field"><label>Meeting time (optional)</label><input class="input" type="time" name="time" value="${m?.time||''}"></div><div class="field"><label>Meeting type *</label><select class="select" name="meetingType"><option ${m?.meetingType==='First meeting'?'selected':''}>First meeting</option><option ${meetingTypeLabel(m?.meetingType)==='Follow-up meeting'?'selected':''}>Follow-up meeting</option></select></div><div class="field"><label>Advisor / EXL POC *</label><input class="input" name="exlPoc" value="${esc(m?.exlPoc||user().name)}" required></div><div class="field"><label>Club/client POC *</label><input class="input" name="clubPoc" value="${esc(m?.clubPoc||'')}" required></div><div class="field"><label>Designation *</label><input class="input" name="clubPocDesignation" value="${esc(m?.clubPocDesignation||'')}" required></div><div class="field full"><label>Meeting agenda *</label><textarea class="textarea" name="agenda" placeholder="What do you plan to discuss?" required>${esc(m?.agenda||'')}</textarea></div>${meetingCapabilityFields('plannedCapability',m?.capabilities||[])}</div><div class="form-actions"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save meeting</button></div></form></div></div>`;
+ const m=db.meetings.find(x=>x.id===id);if(isStaff()||(m&&(m.owner!==user().id||!canSeeClub(m.clubId))))return;
+ const content=`<div class="modal-backdrop" id="modal-backdrop"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="meeting-modal-title"><div class="modal-head"><div class="modal-title" id="meeting-modal-title">${m?'Edit planned meeting':'Plan a meeting'}</div><button class="close" data-close aria-label="Close dialog">×</button></div><form class="modal-body" id="meeting-form"><div class="form-grid"><div class="field"><label>Club or organization *</label><select class="select" name="clubId" required>${visibleClubs().map(c=>`<option value="${c.id}" ${c.id===(m?.clubId||selectedClub)?'selected':''}>${esc(c.name)} · ${c.league}</option>`).join('')}${canCreateCompany()?'<option value="new-organization">Other — enter a company name</option>':''}</select></div>${organizationField()}<div class="field"><label>Meeting date *</label><input class="input" type="date" name="date" value="${m?.date||''}" required></div><div class="field"><label>Meeting time (optional)</label><input class="input" type="time" name="time" value="${m?.time||''}"></div><div class="field"><label>Meeting type *</label><select class="select" name="meetingType"><option ${m?.meetingType==='First meeting'?'selected':''}>First meeting</option><option ${meetingTypeLabel(m?.meetingType)==='Follow-up meeting'?'selected':''}>Follow-up meeting</option></select></div><div class="field"><label>Advisor / EXL POC *</label><input class="input" name="exlPoc" value="${esc(m?.exlPoc||user().name)}" required></div><div class="field"><label>Club/client POC *</label><input class="input" name="clubPoc" value="${esc(m?.clubPoc||'')}" required></div><div class="field"><label>Designation *</label><input class="input" name="clubPocDesignation" value="${esc(m?.clubPocDesignation||'')}" required></div><div class="field full"><label>Meeting agenda *</label><textarea class="textarea" name="agenda" placeholder="What do you plan to discuss?" required>${esc(m?.agenda||'')}</textarea></div>${meetingCapabilityFields('plannedCapability',m?.capabilities||[])}</div><div class="form-actions"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save meeting</button></div></form></div></div>`;
  document.body.insertAdjacentHTML('beforeend',content);bindFieldLabels($('#modal-backdrop'));const dialog=$('#modal-backdrop'),restoreFocus=document.activeElement;dialog.querySelector('[name=clubId]')?.focus();const closeDialog=()=>{dialog.remove();restoreFocus?.focus?.()};dialog.onclick=e=>{if(e.target.id==='modal-backdrop'||e.target.closest('[data-close]'))closeDialog()};dialog.onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();closeDialog();return}if(e.key==='Tab'){const items=[...dialog.querySelectorAll('button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')].filter(x=>x.getClientRects().length);if(!items.length)return;const first=items[0],last=items[items.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus()}}};
- $('#meeting-form').onsubmit=e=>{e.preventDefault();const d=new FormData(e.target),clubId=d.get('clubId');if(!canSeeClub(clubId)){toast('You do not have access to that club');return}const linked=m?.interactionId?visibleInteractions().find(i=>i.id===m.interactionId):visibleInteractions().filter(i=>i.clubId===clubId&&i.owner===user().id).sort((a,b)=>b.date.localeCompare(a.date))[0];const record={id:m?.id||`m-${Date.now()}`,clubId,date:d.get('date'),time:d.get('time')||'',interactionId:m?.interactionId||linked?.id||'',meetingType:d.get('meetingType'),exlPoc:d.get('exlPoc').trim(),clubPoc:d.get('clubPoc').trim(),clubPocDesignation:d.get('clubPocDesignation').trim(),participants:[d.get('clubPoc').trim(),d.get('exlPoc').trim()],agenda:d.get('agenda').trim(),capabilities:d.getAll('plannedCapability'),owner:m?.owner||user().id,status:'Planned'};if(m)db.meetings=db.meetings.map(x=>x.id===m.id?record:x);else db.meetings.push(record);if(linked){linked.meetingId=record.id;linked.nextMeeting=record.date;linked.nextMeetingTime=record.time;linked.nextAgenda=record.agenda}save();$('#modal-backdrop').remove();renderPage();const heading=$('#view h1');heading?.setAttribute('tabindex','-1');heading?.focus();toast(m?'Meeting updated':'Meeting planned')}
+ const meetingForm=$('#meeting-form');
+ meetingForm.elements.clubId.onchange=()=>syncOrganizationField(meetingForm);
+ syncOrganizationField(meetingForm);
+ meetingForm.onsubmit=async e=>{e.preventDefault();const d=new FormData(e.target),club=organizationForEntry(d);if(!club){toast('Select a club or enter a company name');return}const clubId=club.id;const previous=JSON.parse(JSON.stringify(db));const linked=m?.interactionId?visibleInteractions().find(i=>i.id===m.interactionId):visibleInteractions().filter(i=>i.clubId===clubId&&i.owner===user().id).sort((a,b)=>b.date.localeCompare(a.date))[0];const record={id:m?.id||`m-${Date.now()}`,clubId,date:d.get('date'),time:d.get('time')||'',interactionId:m?.interactionId||linked?.id||'',meetingType:d.get('meetingType'),exlPoc:d.get('exlPoc').trim(),clubPoc:d.get('clubPoc').trim(),clubPocDesignation:d.get('clubPocDesignation').trim(),participants:[d.get('clubPoc').trim(),d.get('exlPoc').trim()],agenda:d.get('agenda').trim(),capabilities:d.getAll('plannedCapability'),owner:m?.owner||user().id,status:'Planned'};if(!clubBy(clubId))db.clubs.push(club);if(m)db.meetings=db.meetings.map(x=>x.id===m.id?record:x);else db.meetings.push(record);if(linked){linked.meetingId=record.id;linked.nextMeeting=record.date;linked.nextMeetingTime=record.time;linked.nextAgenda=record.agenda}if(!await persistInteractionChanges(meetingForm,previous))return;$('#modal-backdrop')?.remove();renderPage();const heading=$('#view h1');heading?.setAttribute('tabindex','-1');heading?.focus();toast(m?'Meeting updated':'Meeting planned')}
 }
-function cancelMeeting(id){const m=db.meetings.find(x=>x.id===id);if(!m||isStaff()||m.owner!==user().id)return;if(confirm('Cancel this planned meeting?')){m.status='Canceled';const interaction=visibleInteractions().find(i=>i.id===m.interactionId||i.meetingId===m.id);if(interaction){interaction.meetingId='';interaction.nextMeeting='';interaction.nextMeetingTime='';interaction.nextAgenda='';if(interaction.nextStepType==='Meeting scheduled')interaction.nextStepType='Yet to be decided'}save();renderPage();toast('Meeting canceled')}}
+async function cancelMeeting(id){
+ const meeting=db.meetings.find(item=>item.id===id);
+ if(!meeting||meeting.status!=='Planned'||!canSeeClub(meeting.clubId)||isStaff()||meeting.owner!==user().id)return;
+ if(!confirm('Cancel this planned meeting?'))return;
+ const previous=structuredClone(db),epoch=accountEpoch,targetPage=page,targetView=$('#view');
+ meeting.status='Canceled';
+ const interaction=visibleInteractions().find(item=>item.id===meeting.interactionId||item.meetingId===meeting.id);
+ if(interaction){interaction.meetingId='';interaction.nextMeeting='';interaction.nextMeetingTime='';interaction.nextAgenda='';if(interaction.nextStepType==='Meeting scheduled')interaction.nextStepType='Yet to be decided'}
+ const saved=await persistInteractionChanges(null,previous);
+ if(epoch!==accountEpoch)return;
+ if(page===targetPage&&$('#view')===targetView)renderPage();
+ if(saved)toast('Meeting canceled');
+}
 // Defer completing a planned meeting until its interaction notes are saved.
-function completeMeeting(id){const m=db.meetings.find(x=>x.id===id);if(!m||isStaff()||m.owner!==user().id||m.status!=='Planned')return;meetingToComplete=id;editingInteraction=null;page='log';app();const s=document.querySelector('[name=clubId]'),d=document.querySelector('[name=date]');if(s){s.value=m.clubId;s.dispatchEvent(new Event('change'))}if(d)d.value=m.date;toast('Add the POC details and discussion notes to complete this meeting')}
-function saveInteraction(e){
+function completeMeeting(id){const m=db.meetings.find(x=>x.id===id);if(!m||!canSeeClub(m.clubId)||isStaff()||m.owner!==user().id||m.status!=='Planned')return;meetingToComplete=id;editingInteraction=null;page='log';app();const s=document.querySelector('[name=clubId]'),d=document.querySelector('[name=date]');if(s){s.value=m.clubId;s.dispatchEvent(new Event('change'))}if(d)d.value=m.date;toast('Add the POC details and discussion notes to complete this meeting')}
+async function saveInteraction(e){
  e.preventDefault();if(isStaff()&&!editingInteraction){toast('The Admin account reviews existing activity. Sign in as an EXL user to log an interaction.');return}
- const form=e.target,fd=new FormData(form),clubId=fd.get('clubId');if(!canSeeClub(clubId)){toast('You do not have access to that club');return}
+ const form=e.target,fd=new FormData(form),club=organizationForEntry(fd);if(!club){toast('Select a club or enter a company name');return}const clubId=club.id;
+ const previous=JSON.parse(JSON.stringify(db));
  const attendees=kind=>collectRows(form,kind).map(r=>({name:r.querySelector('[name='+kind+'Name]')?.value.trim()||'',role:r.querySelector('[name='+kind+'Role]')?.value.trim()||''})).filter(a=>a.name);
  const stakeholders=attendees('stakeholder'),participants=attendees('participant');
  if(fd.get('recordMode')==='planned'){
@@ -358,13 +720,14 @@ function saveInteraction(e){
   const related=visibleInteractions().filter(i=>i.clubId===clubId&&i.owner===user().id).sort((a,b)=>b.date.localeCompare(a.date))[0];
   const meeting={id:'m-'+Date.now(),clubId,date,time:fd.get('meetingTime')||'',meetingType:fd.get('meetingType')||'First meeting',exlPoc:participants[0]?.name||'',clubPoc:stakeholders[0]?.name||'',clubPocDesignation:stakeholders[0]?.role||'',participants:[stakeholders[0]?.name,participants[0]?.name].filter(Boolean),agenda:fd.get('summary').trim(),capabilities:fd.getAll('plannedCapability'),owner:user().id,status:'Planned',interactionId:related?.id||''};
   if(related){related.meetingId=meeting.id;related.nextMeeting=date;related.nextMeetingTime=meeting.time;related.nextAgenda=meeting.agenda}
-  db.meetings.push(meeting);save();editingInteraction=null;meetingToComplete=null;page='club';selectedClub=clubId;clubTab='meetings';app();toast('Planned meeting saved. It is not counted as a completed interaction.');return;
+  if(!clubBy(clubId))db.clubs.push(club);
+  db.meetings.push(meeting);if(!await persistInteractionChanges(form,previous))return;editingInteraction=null;meetingToComplete=null;page='club';selectedClub=clubId;clubTab='meetings';app();toast('Planned meeting saved. It is not counted as a completed interaction.');return;
  }
  const followups=!fd.has('hasFollowups')?[]:collectRows(form,'follow').map(r=>({id:r.dataset.id||'f-'+Date.now()+'-'+Math.random().toString(36).slice(2,7),description:r.querySelector('[name=followDescription]').value.trim(),owner:r.querySelector('[name=followOwner]').value,due:r.querySelector('[name=followDue]').value,status:r.querySelector('[name=followStatus]').value})).filter(f=>f.description);if(followups.some(f=>!f.due)){toast('Add a due date for each next step');return}
  if(fd.has('hasFollowups')&&!followups.length){toast('Describe a follow-up action or turn off follow-up actions');return}
  const nextStepDetail=fd.get('nextStepType')==='Other'?String(fd.get('nextStepDetail')||'').trim():'';
  if(fd.get('nextStepType')==='Other'&&!nextStepDetail){toast('Describe the next step');return}
- const prev=editingInteraction,nextDate=fd.get('nextMeeting'),nextAgenda=String(fd.get('nextAgenda')||'').trim();if(nextDate&&nextDate<dt()){toast('Choose today or a future date for the next meeting');return}if(nextDate&&!nextAgenda){toast('Add an agenda for the next meeting');return}if(fd.get('nextStepType')==='Meeting scheduled'&&!nextDate){toast('Add the next meeting date before setting this status');return}const record={id:prev?.id||'i-'+Date.now(),clubId,date:fd.get('date'),stakeholders,participants,exlPoc:participants[0]?.name||'',clubPoc:stakeholders[0]?.name||'',clubPocDesignation:stakeholders[0]?.role||'',nextStepType:fd.get('nextStepType')||'Yet to be decided',nextStepDetail,summary:fd.get('summary').trim(),capabilities:fd.getAll('capability'),other:fd.get('other')?.trim()||'',owner:prev?.owner||user().id,followups,nextMeeting:nextDate||'',nextMeetingTime:fd.get('nextMeetingTime')||'',nextAgenda};if(prev)db.interactions=db.interactions.map(x=>x.id===prev.id?record:x);else db.interactions.push(record);
+ const prev=editingInteraction,nextDate=fd.get('nextMeeting'),nextAgenda=String(fd.get('nextAgenda')||'').trim();if(nextDate&&nextDate<dt()){toast('Choose today or a future date for the next meeting');return}if(nextDate&&!nextAgenda){toast('Add an agenda for the next meeting');return}if(fd.get('nextStepType')==='Meeting scheduled'&&!nextDate){toast('Add the next meeting date before setting this status');return}const record={id:prev?.id||'i-'+Date.now(),clubId,date:fd.get('date'),stakeholders,participants,exlPoc:participants[0]?.name||'',clubPoc:stakeholders[0]?.name||'',clubPocDesignation:stakeholders[0]?.role||'',nextStepType:fd.get('nextStepType')||'Yet to be decided',nextStepDetail,...(fd.get('meetingMinutes')?{meetingMinutes:Number(fd.get('meetingMinutes'))}:{}),summary:fd.get('summary').trim(),capabilities:fd.getAll('capability'),other:fd.get('other')?.trim()||'',owner:prev?.owner||user().id,followups,nextMeeting:nextDate||'',nextMeetingTime:fd.get('nextMeetingTime')||'',nextAgenda};if(!clubBy(clubId))db.clubs.push(club);if(prev)db.interactions=db.interactions.map(x=>x.id===prev.id?record:x);else db.interactions.push(record);
  const linked=prev?.meetingId&&db.meetings.find(m=>m.id===prev.meetingId&&m.status==='Planned');
  if(meetingToComplete){
   const completed=db.meetings.find(m=>m.id===meetingToComplete&&m.status==='Planned');
@@ -372,7 +735,6 @@ function saveInteraction(e){
    completed.status='Completed';
    completed.completedInteractionId=record.id;
   }
-  meetingToComplete=null;
  }
  if(nextDate){
   const meeting=linked||{id:'m-'+Date.now(),meetingType:'Follow-up meeting',status:'Planned'};
@@ -384,20 +746,23 @@ function saveInteraction(e){
   record.meetingId=meeting.id;
  }else if(linked){linked.status='Canceled'}
 
- save();editingInteraction=null;page='club';selectedClub=clubId;clubTab='history';app();toast(prev?'Interaction updated':'Interaction saved')
+ if(!await persistInteractionChanges(form,previous))return;
+ meetingToComplete=null;editingInteraction=null;page='club';selectedClub=clubId;clubTab='history';app();toast(prev?'Interaction updated':'Interaction saved')
 }
-function loginPage(message=''){document.getElementById('app').innerHTML=`<main class="login-screen"><section class="login-card"><div class="brand login-brand"><div class="brand-mark">C</div><div><div class="brand-name">clubhouse</div><div class="brand-sub">Relationship activity</div></div></div><div class="login-intro"><div class="greeting">SPORTS PARTNERSHIPS</div><h1>Welcome back</h1><p>Sign in to review club conversations and keep the next steps moving.</p></div><form id="login-form" class="login-form"><label>Username<input class="input" name="username" autocomplete="username" placeholder="Enter your username" required></label><label>Password<input class="input" name="password" type="password" autocomplete="current-password" placeholder="Enter your password" required></label><div class="login-error" id="login-error" role="alert" aria-live="assertive">${esc(message)}</div><button class="btn primary login-submit" type="submit">Sign in <span>→</span></button></form></section><div class="login-aside"><div class="login-aside-mark">C</div><div class="login-aside-copy"><span>BUILT AROUND THE RELATIONSHIP</span><h2>Better conversations<br>start with a clear view.</h2><p>One place for club history, upcoming meetings, and the commitments that follow.</p></div><div class="login-aside-footer">NFL &nbsp; MLB &nbsp; MLS &nbsp; NHL &nbsp; NBA</div></div></main>`;$('#login-form').onsubmit=async e=>{e.preventDefault();const fd=new FormData(e.target),button=e.target.querySelector('button[type=submit]');button.disabled=true;button.textContent='Signing in…';try{const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:fd.get('username'),password:fd.get('password')})});const payload=await r.json();if(!r.ok)throw new Error(payload.error||'Sign in failed');let needsSave=false;if(payload.state)db=payload.state;else if(payload.actor==='u-admin'){db=freshDB();needsSave=true}else{loginPage('The admin account needs to sign in once to initialize this workspace.');return}db.activeUser=payload.actor;if(!payload.state&&seedShowcaseData(payload.actor)){linkShowcaseMeetings();needsSave=true};if(!isStaff()&&linkShowcaseMeetings())needsSave=true;if(needsSave)save();page='home';app()}catch(err){$('#login-error').textContent=err.message;button.disabled=false;button.innerHTML='Sign in <span>→</span>'}}}
-async function init(){try{const r=await fetch('/api/session');const payload=await r.json();if(!payload.authenticated){loginPage();return}let needsSave=false;if(payload.state)db=payload.state;else if(payload.actor==='u-admin'){db=freshDB();needsSave=true}else{loginPage('Ask an admin to initialize the workspace before signing in as a regular user.');return}db.activeUser=payload.actor;if(!payload.state&&seedShowcaseData(payload.actor)){linkShowcaseMeetings();needsSave=true};if(!isStaff()&&linkShowcaseMeetings())needsSave=true;if(needsSave)save();app()}catch(e){loginPage('Start the local server with python3 server.py, then reload this page.')}};
+function loginPage(message=''){resetAccountState();document.getElementById('app').innerHTML=`<main class="login-screen"><section class="login-card"><div class="brand login-brand"><div class="brand-mark">A</div><div><div class="brand-name">Advisor Activity Tracker</div><div class="brand-sub">Advisor activity</div></div></div><div class="login-intro"><div class="greeting">SPORTS PARTNERSHIPS</div><h1>Welcome back</h1><p>Sign in to review club conversations and keep the next steps moving.</p></div><form id="login-form" class="login-form"><label>Username<input class="input" name="username" autocomplete="username" placeholder="Enter your username" required></label><label>Password<input class="input" name="password" type="password" autocomplete="current-password" placeholder="Enter your password" required></label><div class="login-error" id="login-error" role="alert" aria-live="assertive">${esc(message)}</div><button class="btn primary login-submit" type="submit">Sign in <span>→</span></button></form></section><div class="login-aside"><div class="login-aside-mark">A</div><div class="login-aside-copy"><span>BUILT AROUND THE RELATIONSHIP</span><h2>Better conversations<br>start with a clear view.</h2><p>One place for club history, upcoming meetings, and the commitments that follow.</p></div><div class="login-aside-footer">NFL &nbsp; MLB &nbsp; MLS &nbsp; NHL &nbsp; NBA</div></div></main>`;$('#login-form').onsubmit=async e=>{e.preventDefault();const epoch=accountEpoch;const fd=new FormData(e.target),button=e.target.querySelector('button[type=submit]');button.disabled=true;button.textContent='Signing in…';try{const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:fd.get('username'),password:fd.get('password')})});const payload=await r.json();if(epoch!==accountEpoch)return;if(!r.ok)throw new Error(payload.error||'Sign in failed');let needsSave=false;if(payload.state)db=payload.state;else if(payload.actor==='u-admin'){db=freshDB();needsSave=true}else{loginPage('The admin account needs to sign in once to initialize this workspace.');return}db.activeUser=payload.actor;if(!payload.state&&seedShowcaseData(payload.actor)){linkShowcaseMeetings();needsSave=true};if(!isStaff()&&linkShowcaseMeetings())needsSave=true;if(needsSave&&!await save())return;if(epoch!==accountEpoch)return;page='home';app()}catch(err){if(epoch!==accountEpoch)return;$('#login-error').textContent=err.message;button.disabled=false;button.innerHTML='Sign in <span>→</span>'}}}
+async function init(){const epoch=accountEpoch;try{const r=await fetch('/api/session');const payload=await r.json();if(epoch!==accountEpoch)return;if(!payload.authenticated){loginPage();return}let needsSave=false;if(payload.state)db=payload.state;else if(payload.actor==='u-admin'){db=freshDB();needsSave=true}else{loginPage('Ask an admin to initialize the workspace before signing in as a regular user.');return}db.activeUser=payload.actor;if(!payload.state&&seedShowcaseData(payload.actor)){linkShowcaseMeetings();needsSave=true};if(!isStaff()&&linkShowcaseMeetings())needsSave=true;if(needsSave&&!await save())return;if(epoch!==accountEpoch)return;app()}catch(e){if(epoch===accountEpoch)loginPage(e.message||'Start the local server with python3 server.py, then reload this page.')}};
 
 let timeExpenseTab = 'time';
+let allowanceMonth=dt().slice(0,7);
 async function renderTimeExpenses(view) {
- const heading = isStaff() ? 'Time & expense review' : 'Time & expenses';
+ const heading = isStaff() ? 'Timesheets & expenses' : 'Time & expenses';
  view.innerHTML = head('', heading, '') + '<div class="empty" role="status">Loading entries…</div>';
  bindPage();
  try {
-  const {entries} = await timeExpenseRequest();
+  const {entries,meetingTime=[],allowances=[]} = await timeExpenseRequest();
   if (page !== 'time-expenses' || view !== $('#view')) return;
-  showTimeExpenses(view, heading, entries);
+  contractAllowances=allowances;
+  showTimeExpenses(view, heading, entries, meetingTime);
  } catch (error) {
   if (page !== 'time-expenses' || view !== $('#view')) return;
   view.innerHTML = head('', heading, '') + '<div class="empty" role="alert">'+esc(error.message)+'</div><button class="btn" data-page="time-expenses">Retry</button>';
@@ -412,108 +777,139 @@ async function timeExpenseRequest(data) {
   method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)
   } : {});
  } catch {
-  throw new Error('Could not reach Clubhouse. Check that the server is running and try again.');
+  throw new Error('Could not reach Advisor Activity Tracker. Check that the server is running and try again.');
  }
  if (response.status === 404 || response.status === 405) {
-  throw new Error('Time & expenses is unavailable on this server. Restart Clubhouse with the latest server.py, then refresh.');
+  throw new Error('Time & expenses is unavailable on this server. Restart Advisor Activity Tracker with the latest server.py, then refresh.');
  }
  const result = await response.json().catch(()=>null);
  if (!response.ok || !result || (data ? result.ok !== true : !Array.isArray(result.entries))) {
-  throw new Error(result?.error || 'Clubhouse returned an unexpected response. Refresh and try again.');
+  throw new Error(result?.error || 'Advisor Activity Tracker returned an unexpected response. Refresh and try again.');
  }
  return result;
 }
 
-function timeExpenseWeek(date) {
- const day = new Date(date+'T12:00:00');
- day.setDate(day.getDate() - (day.getDay()+6)%7);
- return localDateKey(day);
-}
-
-function showTimeExpenses(view, heading, entries) {
+function showTimeExpenses(view, heading, entries, meetingTime) {
  const admin = isStaff();
  const time = timeExpenseTab === 'time';
  const rows = entries.filter(item=>item.kind===timeExpenseTab);
- const groups = new Map();
- for (const row of rows) {
-  const week = time ? timeExpenseWeek(row.entry_date) : '';
-  if (!groups.has(week)) groups.set(week, []);
-  groups.get(week).push(row);
- }
  view.innerHTML = head('', heading, '') + `<div class="card">
   <div class="card-head time-expense-toolbar">
-   <div class="segmented" aria-label="Entry type">${[['time','Timesheet'],['travel','Travel expenses']].map(([key,label])=>
+   <div class="segmented" aria-label="Entry type">${[['time','Timesheet'],['travel','Expenses']].map(([key,label])=>
     `<button type="button" data-expense-tab="${key}" class="${timeExpenseTab===key?'active':''}" aria-pressed="${timeExpenseTab===key}">${label}</button>`).join('')}</div>
-   ${admin?(isAdmin()?'<button type="button" class="btn" id="expense-export">Export approved CSV</button>':''):'<button type="button" class="btn primary" id="expense-new">'+(time?'Add daily entry':'Add travel expense')+'</button>'}
+   <div class="form-actions"><button type="button" class="btn" id="expense-export">Download CSV</button>${!admin?'<button type="button" class="btn primary" id="expense-new">'+(time?'Add timesheet':'Add expense')+'</button>':''}</div>
   </div>
+  ${time?`<section class="timesheet-allowance"><div class="time-expense-toolbar"><h2 class="card-title">Monthly contract balance</h2><label>Month <input class="input" type="month" id="allowance-month" value="${esc(allowanceMonth)}"></label></div><div id="allowance-balances"></div></section>`:''}
   <div class="card-body" id="expense-editor"></div>
   <div class="table-wrap"><table class="table time-expense-table"><thead><tr>
-  ${admin?'<th>Advisor / EXL POC</th>':''}<th>Date</th>${time?'<th>Deliverable(s)</th><th>Duration (h)</th>':'<th>Travel from</th><th>Travel to</th><th>Total cost</th><th>Reason for travel</th>'}
-  <th>Status</th><th>Actions</th></tr></thead><tbody>${[...groups].map(([week,items])=>{
-   const total=items.reduce((sum,item)=>sum+Math.round(Number(item.detail.hours)*100),0)/100;
-   return (time?`<tr class="time-week"><th colspan="${admin?6:5}" scope="rowgroup">Week of ${fmt(week)} · ${total.toFixed(2)} h</th></tr>`:'')+
-    items.map(item=>timeExpenseRow(item,admin,time)).join('');
-  }).join('')||`<tr><td colspan="${(time?5:7)+(admin?1:0)}"><div class="empty">${admin?'No submissions yet.':'No entries yet.'}</div></td></tr>`}</tbody></table></div></div>`;
+  ${admin?'<th>Advisor / EXL POC</th>':''}${time?'<th>From date</th><th>To date</th><th>Work and meetings</th><th>Total hours</th><th>Amount</th>':'<th>Date</th><th>Category</th><th>Description</th><th>Total cost</th>'}
+  <th>Status</th><th>Actions</th></tr></thead><tbody>${rows.map(item=>timeExpenseRow(item,admin,time)).join('')||`<tr><td colspan="${(time?7:6)+(admin?1:0)}"><div class="empty">No entries yet.</div></td></tr>`}</tbody></table></div></div>`;
  bindPage();
+ if(time){
+  const renderBalances=()=>{
+   const selected=view.querySelector('#allowance-month').value;
+   allowanceMonth=selected;
+   const owners=admin?db.users.filter(person=>person.role==='User'):[user()];
+   view.querySelector('#allowance-balances').innerHTML=owners.map(person=>{
+    const contract=contractFor(person.id),balance=advisorBalance(person.id,selected);
+    return `<div class="timesheet-advisor-balance">${admin?`<h3>${esc(person.name)}</h3>`:''}${contractTermDates(contract)}${allowanceCards(balance)}</div>`;
+   }).join('');
+  };
+  view.querySelector('#allowance-month').onchange=renderBalances;
+  renderBalances();
+ }
  view.querySelectorAll('[data-expense-tab]').forEach(button=>button.onclick=()=>{
   timeExpenseTab=button.dataset.expenseTab;
-  showTimeExpenses(view,heading,entries);
+  showTimeExpenses(view,heading,entries,meetingTime);
   view.querySelector('[aria-pressed="true"]')?.focus();
  });
- $('#expense-new')?.addEventListener('click',()=>openTimeExpenseEditor(view));
- $('#expense-export')?.addEventListener('click',()=>exportApprovedTimeExpenses(rows,time));
- view.querySelectorAll('[data-expense-edit]').forEach(button=>button.onclick=()=>openTimeExpenseEditor(view,rows.find(item=>item.id===button.dataset.expenseEdit)));
- view.querySelectorAll('[data-expense-review]').forEach(button=>button.onclick=()=>{
-  const item=rows.find(row=>row.id===button.dataset.expenseReview);
-  openTimeExpenseEditor(view,item,true);
- });
+ $('#expense-new')?.addEventListener('click',()=>openTimeExpenseEditor(view,undefined,meetingTime));
+ $('#expense-export')?.addEventListener('click',()=>exportTimeExpenses(rows,time));
+ view.querySelectorAll('[data-expense-edit]').forEach(button=>button.onclick=()=>openTimeExpenseEditor(view,rows.find(item=>item.id===button.dataset.expenseEdit),meetingTime));
+
 }
 
 function timeExpenseRow(item,admin,time) {
  const detail=item.detail;
- const displayStatus=item.status==='Submitted'&&admin?'Awaiting approval':item.status;
- const statusClass={Approved:'green',Returned:'red',Submitted:'blue',Draft:''}[item.status];
- const edit=!admin&&['Draft','Returned'].includes(item.status);
- return `<tr>${admin?`<td>${esc(item.advisor)}</td>`:''}<td>${fmt(item.entry_date)}</td>
- ${time?`<td>${esc(detail.deliverables)}</td><td>${esc(detail.hours)}</td>`:
- `<td>${esc(detail.origin)}</td><td>${esc(detail.destination)}</td><td>${Number(detail.cost).toFixed(2)}</td><td>${esc(detail.reason)}</td>`}
- <td><span class="pill ${statusClass||''}">${esc(displayStatus)}</span>${item.note?`<div class="cell-sub">${esc(item.note)}</div>`:''}</td>
- <td>${edit?`<button type="button" class="action-link" data-expense-edit="${esc(item.id)}">Edit</button>`:
- isAdmin()&&item.status==='Submitted'?`<button type="button" class="action-link" data-expense-review="${esc(item.id)}">Review</button>`:''}</td></tr>`;
+ const edit=!admin;
+ return `<tr>${admin?`<td>${esc(item.advisor)}</td>`:''}<td>${fmt(item.entry_date)}</td>${time?`<td>${fmt(detail.toDate||item.entry_date)}</td>`:''}
+ ${time?`<td>${esc(detail.deliverables)}${detail.meetings?.length?`<ul class="timesheet-meetings">${detail.meetings.map(meeting=>`<li>${meeting.date?fmt(meeting.date)+' · ':''}${esc(meeting.organization)} · ${meeting.minutes} min</li>`).join('')}</ul>`:''}</td><td>${esc(detail.hours)}${detail.meetingMinutes?`<div class="cell-sub">${detail.meetingMinutes} min in meetings</div>`:''}</td><td>${detail.amount!=null?contractMoney(detail.amount):db.contracts?.[item.owner]?.hourlyRate!=null?contractMoney(Number(detail.hours)*Number(db.contracts[item.owner].hourlyRate)):'—'}</td>`:
+ `<td>${esc(detail.category==='Other'?detail.otherCategory:detail.category||'Travel')}</td><td>${esc(detail.reason)}${detail.origin?`<div class="cell-sub">${esc(detail.origin)} → ${esc(detail.destination)}</div>`:''}</td><td>${Number(detail.cost).toFixed(2)}</td>`}
+ <td><span class="pill green">Saved</span></td>
+ <td>${edit?`<button type="button" class="action-link" data-expense-edit="${esc(item.id)}">Edit</button>`:''}</td></tr>`;
 }
 
-function openTimeExpenseEditor(view,item,review=false) {
+function openTimeExpenseEditor(view,item,meetingTime=[]) {
  const detail=item?.detail||{};
  const time=timeExpenseTab==='time';
+ const startDate=item?.entry_date||localDateKey(new Date());
+ const endDate=detail.toDate||startDate;
  const field=(label,name,type,value,attrs='')=>`<label class="field"><span>${label}</span><input class="input" name="${name}" type="${type}" value="${esc(value)}" required ${attrs}></label>`;
  const longField=(label,name,value)=>`<label class="field full"><span>${label}</span><textarea class="textarea" name="${name}" maxlength="2000" required>${esc(value)}</textarea></label>`;
  const editor=$('#expense-editor');
  editor.innerHTML=`<form class="form-section time-expense-editor">
- <h2 class="card-title">${review?`Review ${esc(item.advisor)} · ${fmt(item.entry_date)}`:item?'Edit entry':time?'Daily timesheet':'Travel expense'}</h2>
- ${review?`<label class="field"><span>Note (required when returning)</span><textarea class="textarea" name="note" maxlength="1000"></textarea></label>`:
- `<div class="form-grid">${field('Date','date','date',item?.entry_date||localDateKey(new Date()))}
- ${time?field('Duration (h)','hours','number',detail.hours,'min="0.01" max="24" step="0.01"')+longField('Deliverable(s)','deliverables',detail.deliverables):
+ <h2 class="card-title">${item?'Edit entry':time?'Timesheet':'Expense'}</h2>
+ <div class="form-grid">${field(time?'From date':'Date','date','date',startDate)}${time?field('To date','toDate','date',endDate):''}
+ ${time?`<div class="field full" id="timesheet-meeting-preview" aria-live="polite"></div>
+ <label class="field"><span>Other work (hours)</span><input class="input" name="hours" type="number" min="0" step="0.01" value="${esc(detail.manualHours??detail.hours??'')}"></label>
+ <label class="field full"><span>Other work description</span><textarea class="textarea" name="deliverables" maxlength="2000">${esc(detail.deliverables)}</textarea></label>`:
+ `<label class="field"><span>Category</span><select class="select" name="category">${['Travel','Food','Other'].map(category=>`<option${category===(detail.category||'Travel')?' selected':''}>${category}</option>`).join('')}</select></label>`+
+ field('Other category','otherCategory','text',detail.otherCategory,'maxlength="120"')+
  field('Total cost','cost','number',detail.cost,'min="0.01" max="999999999" step="0.01"')+
  field('Travel from','origin','text',detail.origin,'maxlength="250"')+
  field('Travel to','destination','text',detail.destination,'maxlength="250"')+
- longField('Reason for travel','reason',detail.reason)}</div>`}
+ longField('Description','reason',detail.reason)}</div>
  <div class="form-actions"><button type="button" class="btn" data-entry-close>Close</button>
- ${review?'<button class="btn" name="action" value="return">Return</button><button class="btn primary" name="action" value="approve">Approve</button>':
- '<button class="btn" name="action" value="draft">Save draft</button><button class="btn primary" name="action" value="submit">Submit</button>'}
+ <button class="btn primary" name="action" value="save">${time?'Save timesheet':'Save expense'}</button>
  </div><div class="time-expense-error" role="alert"></div></form>`;
  const form=editor.querySelector('form');
+ if(time){
+  const from=form.elements.date,to=form.elements.toDate;
+  let sameDay=from.value===to.value;
+  const syncTime=()=>{
+   to.min=from.value;
+   const valid=from.value&&to.value&&from.value<=to.value;
+   const meetings=valid?meetingTime.filter(meeting=>meeting.date>=from.value&&meeting.date<=to.value):[];
+   const minutes=meetings.reduce((total,meeting)=>total+meeting.minutes,0);
+   const manual=Number(form.elements.hours.value)||0;
+   form.elements.deliverables.required=manual>0;
+   form.querySelector('#timesheet-meeting-preview').innerHTML=`<strong>Completed meeting time: ${minutes} min</strong>
+   ${meetings.length?`<ul class="timesheet-meetings">${meetings.map(meeting=>`<li>${meeting.date?fmt(meeting.date)+' · ':''}${esc(meeting.organization)} · ${meeting.minutes} min</li>`).join('')}</ul>`:''}
+   <span>Total: ${(manual+minutes/60).toFixed(2)} h${(detail.billingRate??db.contracts?.[user().id]?.hourlyRate)!=null?' · '+contractMoney((manual+minutes/60)*Number(detail.billingRate??db.contracts[user().id].hourlyRate)):''}</span>${valid&&from.value.slice(0,7)!==to.value.slice(0,7)&&manual>0?'<small>Other work hours are split evenly across the calendar days in this range.</small>':''}`;
+  };
+  from.addEventListener('change',()=>{
+   if(sameDay||!to.value||to.value<from.value)to.value=from.value;
+   sameDay=from.value===to.value;
+   syncTime();
+  });
+  to.addEventListener('change',()=>{sameDay=from.value===to.value;syncTime()});
+  form.elements.hours.addEventListener('input',syncTime);
+  syncTime();
+ } else {
+  const syncCategory=()=>{
+   const category=form.elements.category.value;
+   for(const [name,visible] of [['origin',category==='Travel'],['destination',category==='Travel'],['otherCategory',category==='Other']]){
+    const input=form.elements[name];
+    input.closest('label').hidden=!visible;
+    input.disabled=!visible;
+    input.required=visible;
+   }
+  };
+  form.elements.category.addEventListener('change',syncCategory);
+  syncCategory();
+ }
  form.querySelector('input,textarea')?.focus();
  form.querySelector('[data-entry-close]').onclick=()=>{editor.innerHTML='';};
  form.onsubmit=async event=>{
   event.preventDefault();
-  const action=event.submitter?.value||'draft';
+  const action='save';
   const data=Object.fromEntries(new FormData(form));
   const errorBox=form.querySelector('[role=alert]');
-  if(action==='return'&&!data.note.trim()){errorBox.textContent='Enter a note explaining what needs to change.';return}
   errorBox.textContent='';
   form.querySelectorAll('button').forEach(button=>button.disabled=true);
   try {
    await timeExpenseRequest({...data,action,kind:timeExpenseTab,id:item?.id,revision:item?.revision});
+   if(time)allowanceMonth=data.date.slice(0,7);
    if(page==='time-expenses'&&view===$('#view'))await renderTimeExpenses(view);
   } catch(error) {
    errorBox.textContent=error.message;
@@ -523,228 +919,22 @@ function openTimeExpenseEditor(view,item,review=false) {
  };
 }
 
-function exportApprovedTimeExpenses(rows,time) {
- const approved=rows.filter(item=>item.status==='Approved');
- if(!approved.length){toast('No approved entries to export');return}
- const columns=time?['Advisor / EXL POC','Week of','Date','Deliverable(s)','Duration (h)']:['Advisor / EXL POC','Date','Travel From','Travel To','Total Cost','Reason for Travel'];
- const csv=[columns,...approved.map(({advisor,entry_date:date,detail})=>time?
-  [advisor,timeExpenseWeek(date),date,detail.deliverables,detail.hours]:
-  [advisor,date,detail.origin,detail.destination,detail.cost,detail.reason])].map(row=>row.map(value=>{
+function exportTimeExpenses(rows,time) {
+ if(!rows.length){toast(time?'No timesheets to export':'No expenses to export');return}
+ const columns=time?['Advisor / EXL POC','From date','To date','Other work','Other work hours','Meeting minutes','Total hours','Hourly rate ($)','Amount ($)']:['Advisor / EXL POC','Date','Category','Travel From','Travel To','Total Cost','Description'];
+ const csv=[columns,...rows.map(({advisor,owner,entry_date:date,detail})=>time?
+  [advisor,date,detail.toDate||date,detail.deliverables,detail.manualHours??detail.hours,detail.meetingMinutes??0,detail.hours,detail.billingRate??db.contracts?.[owner]?.hourlyRate??'',detail.amount??(db.contracts?.[owner]?.hourlyRate!=null?(Number(detail.hours)*Number(db.contracts[owner].hourlyRate)).toFixed(2):'')]:
+  [advisor,date,detail.category==='Other'?detail.otherCategory:detail.category||'Travel',detail.origin||'',detail.destination||'',detail.cost,detail.reason])].map(row=>row.map(value=>{
    const text=String(value);
    return '"'+(/^[\s]*[=+@-]|^[\t\r\n]/.test(text)?"'"+text:text).replace(/"/g,'""')+'"';
   }).join(',')).join('\r\n');
  const url=URL.createObjectURL(new Blob(['\uFEFF',csv],{type:'text/csv;charset=utf-8'}));
  const link=document.createElement('a');
  link.href=url;
- link.download=time?'approved-timesheets.csv':'approved-travel-expenses.csv';
+ link.download=time?'timesheets.csv':'expenses.csv';
  link.click();
  setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 
-
-const roadmapStages=['Deck','Demo','MVP','Product'];
-async function roadmapRequest(data) {
- const response=await fetch('/api/roadmap',data?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}:{});
- const payload=await response.json().catch(()=>null);
- if(!response.ok||!payload)throw new Error(payload?.error||(response.status===404?'Restart Clubhouse with the latest server.py, then refresh.':'Could not load the roadmap'));
- return payload;
-}
-
-async function renderRoadmap(view, selected='') {
- if(!isStaff()){view.innerHTML='<div class="empty">Roadmap access is restricted to staff.</div>';return}
- view.innerHTML=head('','Product Roadmap','')+'<div class="empty" role="status">Loading roadmap…</div>';
- try {
-  const [{products},activityResponse]=await Promise.all([roadmapRequest(),fetch('/api/state')]);
-  if(!activityResponse.ok)throw new Error('Could not load club activity');
-  const {state}=await activityResponse.json();
-  if(page!=='roadmap'||view!==$('#view'))return;
-  const interactions=state.interactions||[];
-  const product=products.find(item=>item.name===selected);
-  if(product)showRoadmapProduct(view,product,interactions,state.meetings||[]);
-  else showRoadmapList(view,products,interactions);
-  view.querySelector('.roadmap-hero h1')?.focus({preventScroll:true});
-  window.scrollTo({top:0,behavior:'instant'});
- } catch(error) {
-  if(page==='roadmap'&&view===$('#view'))view.innerHTML=head('','Product Roadmap','')+`<div class="empty" role="alert">${esc(error.message)}</div>`;
- }
-}
-
-function roadmapActivity(name, interactions) {
- const aliases={
-  'Collections Accelerator':'Collections Accelerator / Servicing',
-  'Marketing in a Box':'Unified Marketing Solution',
-  'Finance in a Box':'F&A in a Box'
- };
- return interactions.filter(item=>(item.capabilities||[]).some(cap=>cap===name||cap===aliases[name]))
-  .sort((a,b)=>b.date.localeCompare(a.date));
-}
-
-function roadmapStageBadge(stage){
- const index=roadmapStages.indexOf(stage);
- return `<span class="roadmap-stage-tag" data-stage-index="${index}">${esc(stage||'Not set')}</span>`;
-}
-
-function roadmapPortfolioCard(product,interactions){
- const latest=product.updates?.[0];
- const clubs=new Set(roadmapActivity(product.name,interactions).map(item=>item.clubId)).size;
- const current=roadmapStages.indexOf(product.stage);
- const icons={'Collections Accelerator':'▤','Ticket Sales Accelerator':'▰','Marketing in a Box':'◈','Finance in a Box':'▥','Search & Retrieval':'⌕','Smart Stadium':'◎'};
- return `<article class="portfolio-card" data-capability-name="${esc(product.name)}">
- <header class="portfolio-card-header"><span class="roadmap-priority" aria-label="Priority ${esc(product.priority||'not set')}">${esc(product.priority||'—')}</span>
- <span class="portfolio-symbol" aria-hidden="true">${icons[product.name]||'◇'}</span>
- <h3>${esc(product.name)}</h3></header>
- <ol class="portfolio-progress" aria-label="Development stages">
- ${roadmapStages.map((stage,index)=>`<li data-progress="${index<current?'completed':index===current?'current':'pending'}"${index===current?' aria-current="step"':''}>
- <span class="portfolio-progress-dot" aria-hidden="true">${index<current?'✓':''}</span><span>${stage}</span>
- ${index<current?'<span class="portfolio-sr-only"> completed</span>':''}</li>`).join('')}</ol>
- ${current<0?'<p class="roadmap-meta portfolio-stage-unset">Development stage not set</p>':''}
- <div class="portfolio-card-body"><dl><div class="portfolio-preview"><dt>Latest update</dt><dd><span class="portfolio-preview-text">${esc(latest?.summary||'No development update yet')}</span>${latest?.date?`<time class="roadmap-meta" datetime="${esc(latest.date)}">${fmt(latest.date)}</time>`:''}</dd></div>
- <div class="portfolio-preview"><dt>Next steps</dt><dd><span class="portfolio-preview-text">${esc(latest?.nextSteps||'—')}</span>${roadmapDeadline(latest)}</dd></div></dl></div>
- <footer class="portfolio-card-footer">
- <div class="portfolio-clubs"><strong>${clubs}</strong><span>${clubs===1?'Club':'Clubs'} reached</span></div><button type="button" class="portfolio-details-link" data-roadmap-product="${esc(product.name)}" aria-label="View details for ${esc(product.name)}">View details <span aria-hidden="true">→</span></button></footer></article>`;
-}
-
-function showRoadmapList(view,products,interactions) {
- const sorted=products.slice().sort((a,b)=>(Number(a.priority?.slice(1))||100)-(Number(b.priority?.slice(1))||100));
- const counts=roadmapStages.map(stage=>products.filter(item=>item.stage===stage).length);
- view.innerHTML=`<div class="roadmap-page roadmap-portfolio">
- <header class="roadmap-hero portfolio-hero"><div class="portfolio-heading"><h1 tabindex="-1">Product Roadmap</h1></div>
- <div class="portfolio-metrics"><div class="portfolio-total"><span aria-hidden="true">▤</span><div><strong>${products.length}</strong><div>Capabilities</div></div></div>
- ${roadmapStages.map((stage,index)=>`<div class="portfolio-metric" data-stage-index="${index}"><span class="portfolio-metric-icon" aria-hidden="true">${['▤','▷','◇','▱'][index]}</span><div><strong>${stage}</strong><div>${counts[index]} ${counts[index]===1?'capability':'capabilities'}</div></div></div>`).join('')}
- </div></header>
- <section aria-labelledby="roadmap-capabilities-heading"><div class="portfolio-toolbar">
- <h2 id="roadmap-capabilities-heading">Capabilities Portfolio</h2>
- <label class="portfolio-search"><span class="portfolio-sr-only">Search capabilities</span><span aria-hidden="true">⌕</span>
- <input class="input" type="search" placeholder="Search capabilities…" autocomplete="off" id="roadmap-search"></label></div>
- <div class="portfolio-grid">${sorted.map(product=>roadmapPortfolioCard(product,interactions)).join('')}</div>
- <p class="empty" id="roadmap-empty-filter" role="status" hidden>No capabilities match your search.</p></section></div>`;
- const search=view.querySelector('#roadmap-search');
- search.addEventListener('input',()=>{
-  const words=search.value.trim().toLowerCase().split(/\s+/);
-  let count=0;
-  view.querySelectorAll('[data-capability-name]').forEach(card=>{
-   const name=card.dataset.capabilityName.toLowerCase();
-   card.hidden=!words.every(word=>name.includes(word));
-   if(!card.hidden)count++;
-  });
-  view.querySelector('#roadmap-empty-filter').hidden=count>0;
- });
- view.querySelectorAll('[data-roadmap-product]').forEach(button=>button.onclick=()=>renderRoadmap(view,button.dataset.roadmapProduct));
-}
-
-function roadmapDeadline(update){
- if(!update?.nextSteps)return '';
- return update.nextStepsDue
-  ? `<span class="roadmap-meta">Due <time datetime="${esc(update.nextStepsDue)}">${fmt(update.nextStepsDue)}</time></span>`
-  : '<span class="roadmap-meta">Deadline not set</span>';
-}
-
-function roadmapUpdate(update){
- return `<article class="roadmap-entry roadmap-update">
- ${roadmapStageBadge(update.stage)}<p class="roadmap-update-summary">${esc(update.summary)}</p>
- ${update.blockers?`<p><strong>Blockers</strong> · ${esc(update.blockers)}</p>`:''}
- ${update.nextSteps?`<p><strong>Next step</strong> · ${esc(update.nextSteps)}</p>${roadmapDeadline(update)}`:''}
- <footer class="roadmap-meta">${update.date?`<time datetime="${esc(update.date)}">${fmt(update.date)}</time>`:''}${update.author&&update.author!=='Tracker reference'?`<span>${esc(update.author)}</span>`:''}</footer></article>`;
-}
-
-function roadmapMeetingCard(meeting){
- const club=clubBy(meeting.clubId);
- const logo=club?clubLogoUrl(club):'';
- return `<article class="roadmap-meeting">
- <div class="roadmap-meeting-club">
- <span class="roadmap-meeting-logo">${logo?`<img src="${esc(logo)}" alt="" loading="lazy">`:esc(club?.league||'—')}</span>
- <div><strong>${esc(clubShort(club))}</strong>
- ${meeting.clubPoc?`<div class="roadmap-meta">${esc(meeting.clubPoc)}</div>`:''}
- ${meeting.agenda?`<p>${esc(meeting.agenda)}</p>`:''}</div></div>
- <div class="roadmap-meeting-date"><time datetime="${esc(meeting.date)}">${fmt(meeting.date)}</time>
- <span class="roadmap-meta">${esc(meetingTimeLabel(meeting.time))}</span></div>
- <span class="roadmap-stage-tag" data-stage-index="1">Scheduled</span></article>`;
-}
-
-function roadmapDevelopmentCycle(current){
- const currentIndex=roadmapStages.indexOf(current);
- const descriptions=['Proposition and business case','Solution demonstration','Build and validate the core solution','Prepare for broader rollout'];
- const icons=['▤','▷','◇','▱'];
- return `<ol class="roadmap-stages roadmap-cycle">${roadmapStages.map((stage,index)=>{
-  const status=currentIndex<0?'Not set':index<currentIndex?'Completed':index===currentIndex?'Current stage':'Not started';
-  return `<li data-cycle-state="${status}"${index===currentIndex?' aria-current="step"':''}>
-  <span class="roadmap-cycle-icon" aria-hidden="true">${index<currentIndex&&currentIndex>=0?'✓':icons[index]}</span>
-  <div><strong>${stage}</strong><p>${descriptions[index]}</p><small>${status}</small></div></li>`;
- }).join('')}</ol>`;
-}
-
-function showRoadmapProduct(view,product,interactions,meetings) {
- const updates=product.updates||[];
- const upcoming=meetings.filter(meeting=>meeting.status==='Planned'&&meeting.date>=localDateKey(new Date())&&meeting.capabilities?.includes(product.name))
-  .sort((a,b)=>a.date.localeCompare(b.date)||(a.time||'').localeCompare(b.time||''));
- const clubs=new Map();
- for(const item of roadmapActivity(product.name,interactions)){
-  if(!clubs.has(item.clubId))clubs.set(item.clubId,[]);
-  clubs.get(item.clubId).push(item);
- }
- const fields=[['Development owner',product.owner],['Supporting EXL team',product.team],['Subject matter expert advisors',product.advisors],['Anchor clients',product.anchorClients],...(product.proposedAnchorClients?[['Proposed anchor clients',product.proposedAnchorClients]]:[]),...(product.proposedAdvisors?[['Proposed expert advisors',product.proposedAdvisors]]:[])];
- view.innerHTML=`<div class="roadmap-page"><header class="roadmap-hero roadmap-detail-hero">
- <div><button type="button" class="roadmap-back" id="roadmap-back">← All capabilities</button>
- <h1 tabindex="-1">${esc(product.name)}</h1>
- <div class="roadmap-hero-meta">
- ${product.priority?`<span class="roadmap-priority">Priority ${esc(product.priority)}</span>`:''}
- ${roadmapStageBadge(product.stage)}
- <span>${clubs.size} ${clubs.size===1?'club':'clubs'} reached</span>
- <span>${upcoming.length} upcoming ${upcoming.length===1?'meeting':'meetings'}</span></div></div>
- ${isSubadmin()?'<button type="button" class="btn roadmap-edit-button" id="roadmap-edit">Update roadmap</button>':''}</header>
- <section class="card roadmap-section"><div class="card-head"><h2 class="card-title">Product Roadmap</h2></div>
- <div class="card-body">${roadmapDevelopmentCycle(product.stage)}</div></section>
- <section class="card roadmap-section"><div class="card-head"><h2 class="card-title">Ownership &amp; stakeholders</h2></div>
- <div class="card-body"><dl class="roadmap-people">${fields.map(([label,value],index)=>`<div><span class="roadmap-person-icon" aria-hidden="true">${['◉','▦','◎','◇'][index%4]}</span><div><dt>${label}</dt><dd>${esc(value||'Not set')}</dd></div></div>`).join('')}</dl></div></section>
- <div id="roadmap-editor"></div>
- <div class="roadmap-middle">
- <section class="card roadmap-section"><div class="card-head"><h2 class="card-title">Latest development update</h2>${updates.length>1?'<a class="roadmap-inline-link" href="#roadmap-update-history">View update history →</a>':''}</div>
- <div class="card-body">${updates.length?roadmapUpdate(updates[0]):'<div class="empty">No development updates yet.</div>'}</div></section>
- <section class="card roadmap-section"><div class="card-head"><h2 class="card-title">Upcoming meetings</h2><span class="count-badge">${upcoming.length}</span></div>
- <div class="card-body scroll-list" tabindex="0" aria-label="Upcoming meetings">${upcoming.length?upcoming.map(roadmapMeetingCard).join(''):'<div class="empty">No upcoming meetings tagged with this capability.</div>'}</div></section></div>
- ${updates.length>1?`<section class="card roadmap-section" id="roadmap-update-history"><div class="card-head"><h2 class="card-title">Earlier development updates</h2></div><div class="card-body scroll-list" tabindex="0" aria-label="Weekly development updates">
- ${updates.slice(1).map(roadmapUpdate).join('')}</div></section>`:''}
- <section class="card roadmap-section"><div class="card-head"><h2 class="card-title">Clubs reached</h2><span class="count-badge">${clubs.size}</span></div>
- <div class="card-body">${[...clubs].map(([id,items])=>`<details class="roadmap-club"><summary><strong>${esc(clubShort(clubBy(id)))}</strong><span>${fmt(items[0].date)} · ${esc(exlPoc(items[0]))} · ${items.length} ${items.length===1?'interaction':'interactions'}</span>${nextStepPill(items[0])}</summary>
- <div class="club-history-list roadmap-interactions">${items.map(item=>clubInteractionCard(item,{meetings,readOnly:true})).join('')}</div><button type="button" class="action-link" data-roadmap-club="${esc(id)}">Open club history →</button></details>`).join('')||'<div class="empty">No club interactions reference this capability yet.</div>'}</div></section></div>`;
- $('#roadmap-back').onclick=()=>renderRoadmap(view);
- $('#roadmap-edit')?.addEventListener('click',()=>openRoadmapEditor(view,product));
- view.querySelectorAll('[data-roadmap-club]').forEach(button=>button.onclick=()=>openClub(button.dataset.roadmapClub));
-}
-
-function openRoadmapEditor(view,product) {
- if(!isSubadmin())return;
- const editor=$('#roadmap-editor');
- const field=(label,name,max)=>`<label class="field"><span>${label}</span><input class="input" name="${name}" maxlength="${max}" value="${esc(product[name]||'')}"></label>`;
- const area=(label,name,max,value='')=>`<label class="field full"><span>${label}</span><textarea class="textarea" name="${name}" maxlength="${max}">${esc(value)}</textarea></label>`;
- editor.innerHTML=`<form class="card form-card roadmap-section roadmap-editor"><h2 class="card-title">Update roadmap</h2><fieldset><legend>Development and ownership</legend><div class="form-grid">
- ${field('Priority (e.g., P1)','priority',3)}
- <label class="field"><span>Development stage</span><select class="select" name="stage" required><option value="">Select stage</option>${roadmapStages.map(stage=>`<option${stage===product.stage?' selected':''}>${stage}</option>`).join('')}</select></label>
- ${field('Development owner','owner',300)}${field('Supporting EXL team','team',300)}</div></fieldset>
- <fieldset><legend>Advisors and anchor clients</legend><div class="form-grid">
- ${area('Subject matter expert advisors','advisors',1000,product.advisors)}${area('Anchor clients','anchorClients',2000,product.anchorClients)}
- ${area('Proposed expert advisors','proposedAdvisors',1000,product.proposedAdvisors)}${area('Proposed anchor clients','proposedAnchorClients',2000,product.proposedAnchorClients)}</div></fieldset>
- <fieldset><legend>Weekly update</legend><div class="form-grid">
- <label class="field"><span>Update date</span><input class="input" type="date" name="date" value="${localDateKey(new Date())}"></label>
- ${area('Weekly development update','summary',4000)}${area('Blockers','blockers',2000)}${area('Next steps','nextSteps',2000)}
- <label class="field"><span>Next steps deadline</span><input class="input" type="date" name="nextStepsDue"></label>
- </div></fieldset><div class="form-actions"><button type="button" class="btn" id="roadmap-cancel">Cancel</button><button type="submit" class="btn primary">Save</button></div><div class="time-expense-error" role="alert"></div></form>`;
- const form=editor.querySelector('form');
- const syncDeadline=()=>{form.elements.nextStepsDue.required=!!form.elements.nextSteps.value.trim()};
- form.elements.nextSteps.addEventListener('input',syncDeadline);
- syncDeadline();
- form.querySelector('input').focus();
- $('#roadmap-cancel').onclick=()=>{editor.replaceChildren();$('#roadmap-edit')?.focus()};
- form.onsubmit=async event=>{
-  event.preventDefault();
-  const saveButton=event.submitter||form.querySelector('[type=submit]');
-  saveButton.disabled=true;
-  try {
-   await roadmapRequest({...Object.fromEntries(new FormData(form)),name:product.name,revision:product.revision||0});
-   if(page==='roadmap'&&view===$('#view'))await renderRoadmap(view,product.name);
-  } catch(error){form.querySelector('[role=alert]').textContent=error.message}
-  finally{saveButton.disabled=false}
- };
-}
 
 init();

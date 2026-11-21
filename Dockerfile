@@ -7,7 +7,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     CLUBHOUSE_DB_PATH=/data/clubhouse.sqlite3
 
 WORKDIR /app
-COPY app.js styles.css index.html server.py backup.py ./
+COPY --chown=10001:10001 app.js styles.css index.html server.py backup.py sync_workspace.py workspace-data.sqlite3 ./
 RUN mkdir -p /data && chown 10001:10001 /data
 USER 10001:10001
 

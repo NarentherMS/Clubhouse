@@ -1,4 +1,4 @@
-"""Create a consistent SQLite snapshot of the Clubhouse workspace."""
+"""Create a consistent SQLite snapshot of the Advisor Activity Tracker workspace."""
 from datetime import datetime, timezone
 from pathlib import Path
 import os

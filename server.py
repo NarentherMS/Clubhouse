@@ -1,4 +1,4 @@
-"""Local development server for Clubhouse. Uses only the Python standard library."""
+"""Local development server for Advisor Activity Tracker. Uses only the Python standard library."""
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 from pathlib import Path
@@ -7,12 +7,16 @@ import sqlite3
 import hashlib
 import hmac
 import secrets
+import uuid
 import os
 import time
 import threading
+import tempfile
+from contextlib import closing
 from collections import defaultdict
 from http.cookies import SimpleCookie
-from datetime import date as calendar_date
+from datetime import date as calendar_date, timedelta
+from decimal import Decimal, ROUND_HALF_UP
 import re
 
 ROOT = Path(__file__).resolve().parent
@@ -32,6 +36,32 @@ DEMO_ACCOUNTS = [
     ("jamie", "JamieClub26!", "u-jamie"),
     ("taylor", "TaylorClub26!", "u-taylor"),
 ]
+
+def restore_workspace_snapshot(snapshot_path=None):
+    """Load committed data on first run; never replace an existing local database."""
+    snapshot = Path(snapshot_path) if snapshot_path is not None else ROOT / 'workspace-data.sqlite3'
+    if DB_PATH.exists() or not snapshot.exists():
+        return False
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(prefix='.workspace-import-', suffix='.sqlite3', dir=DB_PATH.parent)
+    os.close(descriptor)
+    temporary = Path(temporary_name)
+    try:
+        with closing(sqlite3.connect(snapshot.resolve().as_uri() + '?mode=ro', uri=True)) as source:
+            with closing(sqlite3.connect(temporary)) as destination:
+                source.backup(destination)
+                destination.execute('PRAGMA journal_mode=DELETE')
+                if destination.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
+                    raise ValueError('The portable workspace failed its integrity check')
+        os.chmod(temporary, 0o600)
+        try:
+            os.link(temporary, DB_PATH)
+        except FileExistsError:
+            return False
+    finally:
+        temporary.unlink(missing_ok=True)
+    return True
+
 
 def connect():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -183,6 +213,9 @@ def validate_state_shape(state):
             detail = item.get("nextStepDetail")
             if not isinstance(detail, str) or not detail.strip() or len(detail) > 300:
                 raise ValueError("Describe the Other next step in 300 characters or fewer")
+        minutes = item.get("meetingMinutes")
+        if minutes is not None and (type(minutes) is not int or not 1 <= minutes <= 1440):
+            raise ValueError("Meeting duration must be between 1 and 1440 minutes")
         for follow in item.get("followups", []):
             if not isinstance(follow, dict) or follow.get("status") not in {"Open", "Done", "Canceled"}:
                 raise ValueError("Invalid next step")
@@ -194,12 +227,43 @@ def validate_state_shape(state):
         if meeting.get("status") not in {"Planned", "Completed", "Canceled"} or not valid_date(meeting.get("date")):
             raise ValueError("Meeting date or status is invalid")
         capabilities = meeting.get("capabilities", [])
-        if not isinstance(capabilities, list) or any(name not in ROADMAP_CAPABILITIES for name in capabilities):
+        if not isinstance(capabilities, list) or any(name not in CAPABILITIES for name in capabilities):
             raise ValueError("Select valid planned meeting capabilities")
         if meeting.get("time") and not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", meeting["time"]):
             raise ValueError("Meeting time is invalid")
     if not isinstance(state.get("contracts", {}), dict):
         raise ValueError("Invalid contract records")
+    for contract in state.get("contracts", {}).values():
+        if not isinstance(contract, dict):
+            raise ValueError("Invalid contract terms")
+        for field in ("hourlyRate", "firstMonthCap", "monthlyCap", "hoursCap"):
+            value = contract.get(field, 0)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 999999999:
+                raise ValueError("Contract rates and hour caps must be valid non-negative numbers")
+
+class StateConflict(ValueError):
+    pass
+
+
+def record_version(record):
+    encoded = json.dumps(record, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def record_changed(incoming, kind, key, previous, candidate):
+    if same(previous, candidate):
+        return False
+    versions = incoming.get("recordVersions", {})
+    versions = versions.get(kind, {}) if isinstance(versions, dict) else {}
+    expected = versions.get(key) if isinstance(versions, dict) else None
+    # An untouched record from an old page must not replace a newer server record.
+    if expected == record_version(candidate):
+        return False
+    if expected != record_version(previous):
+        label = {"interactions": "interaction", "meetings": "meeting", "contracts": "contract"}[kind]
+        raise StateConflict(f"This {label} changed in another session. Copy your edits, then reload the latest data before saving.")
+    return True
+
 
 def save_state_transaction(incoming, actor):
     validate_state_shape(incoming)
@@ -208,15 +272,102 @@ def save_state_transaction(incoming, actor):
         row = conn.execute("SELECT payload FROM app_state WHERE id=1").fetchone()
         old = json.loads(row[0]) if row else None
         if old is None:
-            if not any(u.get("id") == actor and u.get("role") == "Admin" for u in incoming.get("users", [])):
-                raise ValueError("Set up the workspace using an administrator account")
+            bootstrap = conn.execute("SELECT user_id FROM accounts WHERE username='admin'").fetchone()
+            if not bootstrap or actor != bootstrap[0] or not any(u.get("id") == actor and u.get("role") == "Admin" for u in incoming.get("users", [])):
+                raise ValueError("Set up the workspace using the administrator account")
             merged = incoming
         else:
             merged = validate_and_merge(old, incoming, actor)
+        merged.pop("recordVersions", None)
         merged["activeUser"] = actor
         merged["clubs"] = [{k: v for k, v in club.items() if k != "assignments"} for club in merged.get("clubs", [])]
         conn.execute("INSERT INTO app_state(id,payload) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload", (json.dumps(merged),))
     return merged
+
+def company_access_for(state, advisor):
+    return state.get("companyAccess", {}).get(advisor, {"mode": "all", "companyIds": [], "revision": 0})
+
+
+def allowed_company_ids(state, actor):
+    person = next((u for u in state.get("users", []) if u["id"] == actor), None)
+    if not person:
+        return set()
+    access = company_access_for(state, actor)
+    known = {company["id"] for company in state.get("clubs", [])}
+    if person.get("role") in {"Admin", "Sub-admin"} or access["mode"] == "all":
+        return known
+    return known.intersection(access["companyIds"])
+
+
+def update_company_access(actor, data):
+    with connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT payload FROM app_state WHERE id=1").fetchone()
+        if not row:
+            raise ValueError("Workspace is not initialized")
+        state = json.loads(row[0])
+        users = {u["id"]: u for u in state.get("users", [])}
+        if users.get(actor, {}).get("role") != "Admin":
+            raise ValueError("Only Admin can change company access")
+        if not isinstance(data, dict):
+            raise ValueError("Enter valid company access settings")
+        advisor = data.get("advisorId")
+        if not isinstance(advisor, str) or users.get(advisor, {}).get("role") != "User":
+            raise ValueError("Select an advisor")
+        previous = company_access_for(state, advisor)
+        if type(data.get("revision")) is not int or data["revision"] != previous["revision"]:
+            raise ValueError("Company access changed. Reload this page and try again.")
+        mode, ids = data.get("mode"), data.get("companyIds", [])
+        if mode not in {"all", "selected"} or not isinstance(ids, list) or len(ids) > 500 or any(not isinstance(value, str) for value in ids):
+            raise ValueError("Select All companies or Selected companies")
+        known = {club["id"] for club in state.get("clubs", [])}
+        if len(set(ids)) != len(ids) or not set(ids).issubset(known):
+            raise ValueError("Select companies from the CME directory")
+        state.setdefault("companyAccess", {})[advisor] = {
+            "mode": mode, "companyIds": sorted(ids) if mode == "selected" else [],
+            "revision": previous["revision"] + 1,
+        }
+        conn.execute("UPDATE app_state SET payload=? WHERE id=1", (json.dumps(state),))
+        return visible_state(state, actor)
+
+
+def add_company(actor, data):
+    """Create an Other company and grant access in the same transaction."""
+    with connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT payload FROM app_state WHERE id=1").fetchone()
+        if not row:
+            raise ValueError("Workspace is not initialized")
+        state = json.loads(row[0])
+        users = {user["id"]: user for user in state.get("users", [])}
+        if users.get(actor, {}).get("role") != "Admin":
+            raise ValueError("Only Admin can add companies here")
+        if not isinstance(data, dict):
+            raise ValueError("Enter a company name and select an advisor")
+        advisor = data.get("advisorId")
+        if not isinstance(advisor, str) or users.get(advisor, {}).get("role") != "User":
+            raise ValueError("Select an advisor")
+        access = company_access_for(state, advisor)
+        if type(data.get("revision")) is not int or data["revision"] != access["revision"]:
+            raise ValueError("Company access changed. Reload this page and try again.")
+        raw_name = data.get("name")
+        if not isinstance(raw_name, str) or not raw_name.strip() or len(raw_name) > 120:
+            raise ValueError("Enter a company name in 120 characters or fewer")
+        name = " ".join(raw_name.split())
+        if any(" ".join(company.get("name", "").split()).casefold() == name.casefold() for company in state.get("clubs", [])):
+            raise ValueError("This company already exists in the CME directory. Select it in Company access.")
+        if len(state.get("clubs", [])) >= 500:
+            raise ValueError("The CME directory has reached its 500-company limit")
+        company = {"id": "org-" + str(uuid.uuid4()), "name": name, "league": "Other"}
+        state.setdefault("clubs", []).append(company)
+        state.setdefault("companyAccess", {})[advisor] = {
+            "mode": access["mode"],
+            "companyIds": sorted(set(access["companyIds"]) | {company["id"]}) if access["mode"] == "selected" else [],
+            "revision": access["revision"] + 1,
+        }
+        conn.execute("UPDATE app_state SET payload=? WHERE id=1", (json.dumps(state),))
+        return {"company": company, "state": visible_state(state, actor)}
+
 
 def visible_state(state, actor):
     result = json.loads(json.dumps(state))
@@ -224,7 +375,13 @@ def visible_state(state, actor):
     if not person:
         raise ValueError("Unknown workspace user")
     result["activeUser"] = actor
-    # Contract information is private to its owner unless the signed-in user is an admin.
+    allowed = allowed_company_ids(state, actor)
+    result["clubs"] = [club for club in result.get("clubs", []) if club["id"] in allowed]
+    result["companyAccess"] = {
+        u["id"]: company_access_for(state, u["id"])
+        for u in state.get("users", []) if u.get("role") == "User" and (person.get("role") != "User" or u["id"] == actor)
+    }
+    # Company visibility and record ownership are independent checks.
     if person.get("role") == "User":
         # Keep the main activity payload private to its creator. Next steps
         # assigned to this user are provided separately without meeting notes.
@@ -233,17 +390,21 @@ def visible_state(state, actor):
             {"id": follow.get("id"), "interactionId": item.get("id"), "clubId": item.get("clubId"),
              "interactionOwner": item.get("owner"), "description": follow.get("description", ""),
              "owner": follow.get("owner"), "due": follow.get("due", ""), "status": follow.get("status", "Open")}
-            for item in all_interactions if item.get("owner") != actor
+            for item in all_interactions if item.get("owner") != actor and item.get("clubId") in allowed
             for follow in item.get("followups", []) if follow.get("owner") == actor
         ]
-        result["interactions"] = [item for item in all_interactions if item.get("owner") == actor]
-        result["meetings"] = [m for m in result.get("meetings", []) if m.get("owner") == actor]
+        result["interactions"] = [item for item in all_interactions if item.get("owner") == actor and item.get("clubId") in allowed]
+        result["meetings"] = [m for m in result.get("meetings", []) if m.get("owner") == actor and m.get("clubId") in allowed]
         contracts = result.get("contracts", {})
         result["contracts"] = {actor: contracts[actor]} if actor in contracts else {}
-    # All signed-in users share the club directory. Remove legacy assignment
-    # metadata so old demo data cannot imply restrictions.
+    # The companyAccess map replaces obsolete club assignment metadata.
     for club in result.get("clubs", []):
         club.pop("assignments", None)
+    result["recordVersions"] = {
+        "interactions": {item["id"]: record_version(item) for item in result.get("interactions", [])},
+        "meetings": {item["id"]: record_version(item) for item in result.get("meetings", [])},
+        "contracts": {key: record_version(value) for key, value in result.get("contracts", {}).items()},
+    }
     return result
 
 def update_followup_status(interaction_id, followup_id, status, actor):
@@ -263,10 +424,13 @@ def update_followup_status(interaction_id, followup_id, status, actor):
             raise ValueError("Next step not found")
         if person.get("role") != "User":
             raise ValueError("Staff have read-only access to next steps")
+        if interaction.get("clubId") not in allowed_company_ids(state, actor):
+            raise ValueError("You do not have access to this company")
         if followup.get("owner") != actor and interaction.get("owner") != actor:
             raise ValueError("You can only update your own next steps")
         followup["status"] = status
         conn.execute("UPDATE app_state SET payload=? WHERE id=1", (json.dumps(state),))
+        return record_version(interaction) if interaction.get("owner") == actor else None
 
 def same(a, b):
     return json.dumps(a, sort_keys=True) == json.dumps(b, sort_keys=True)
@@ -279,29 +443,49 @@ def validate_and_merge(old, incoming, actor):
     if person.get("role") == "Sub-admin":
         raise ValueError("Sub-admins have read-only access to workspace records")
     if person.get("role") == "Admin":
-        merged = dict(incoming)
-        merged["users"] = old["users"]
-        # An admin may save contract or workspace changes from a stale view.
-        # Always retain the activity currently in the database.
-        merged["interactions"] = old.get("interactions", [])
-        merged["meetings"] = old.get("meetings", [])
+        merged = json.loads(json.dumps(old))
+        contracts = merged.setdefault("contracts", {})
+        for key, candidate in incoming.get("contracts", {}).items():
+            if users.get(key, {}).get("role") != "User":
+                raise ValueError("Contracts must belong to an advisor")
+            previous = old.get("contracts", {}).get(key)
+            if previous is None or record_changed(incoming, "contracts", key, previous, candidate):
+                contracts[key] = candidate
         merged["activeUser"] = actor
-        merged["clubs"] = [{k: v for k, v in club.items() if k != "assignments"} for club in incoming.get("clubs", [])]
         return merged
 
-    club_ids = {c["id"] for c in old.get("clubs", [])}
+    clubs = {club["id"]: club for club in old.get("clubs", [])}
+    names = {club["name"].casefold() for club in clubs.values() if club.get("league") == "Other"}
     for club in incoming.get("clubs", []):
-        if club["id"] not in club_ids:
-            raise ValueError("Unknown club")
+        club_id = club["id"]
+        if club_id in clubs:
+            continue
+        if company_access_for(old, actor)["mode"] != "all":
+            raise ValueError("Only companies assigned by Admin are available to you")
+        name = club.get("name")
+        if (club.get("league") != "Other" or not re.fullmatch(r"org-[a-f0-9-]{36}", club_id)
+                or not isinstance(name, str) or not name.strip() or len(name.strip()) > 120):
+            raise ValueError("Enter a valid organization name")
+        name = name.strip()
+        if name.casefold() in names:
+            raise ValueError("That organization already exists. Refresh and select it from Other.")
+        clubs[club_id] = {"id": club_id, "league": "Other", "name": name}
+        names.add(name.casefold())
 
+    club_ids = set(clubs)
+    allowed = allowed_company_ids(old, actor)
+    if company_access_for(old, actor)["mode"] == "all":
+        allowed = club_ids
     merged = json.loads(json.dumps(old))
-    merged["clubs"] = [{k: v for k, v in club.items() if k != "assignments"} for club in old.get("clubs", [])]
+    merged["clubs"] = list(clubs.values())
     old_interactions = {x["id"]: x for x in old.get("interactions", [])}
     merged_interactions = {x["id"]: x for x in old.get("interactions", [])}
     for item in incoming.get("interactions", []):
-        if item.get("clubId") not in club_ids:
-            raise ValueError("Unknown club")
+        if item.get("clubId") not in allowed:
+            raise ValueError("You do not have access to this company. Refresh the CME directory.")
         previous = old_interactions.get(item["id"])
+        if previous and previous.get("clubId") not in allowed:
+            raise ValueError("You do not have access to this interaction company")
         if previous is None:
             if item.get("owner") != actor:
                 raise ValueError("You can only create interactions for yourself")
@@ -309,7 +493,8 @@ def validate_and_merge(old, incoming, actor):
         elif previous.get("owner") == actor:
             if item.get("owner") != actor:
                 raise ValueError("Interaction ownership cannot be transferred")
-            merged_interactions[item["id"]] = item
+            if record_changed(incoming, "interactions", item["id"], previous, item):
+                merged_interactions[item["id"]] = item
         else:
             normalized = json.loads(json.dumps(item))
             before_f = {f["id"]: f for f in previous.get("followups", [])}
@@ -328,15 +513,18 @@ def validate_and_merge(old, incoming, actor):
             for follow in authorized_update.get("followups", []):
                 if follow.get("id") in allowed_statuses:
                     follow["status"] = allowed_statuses[follow["id"]]
-            merged_interactions[item["id"]] = authorized_update
+            if record_changed(incoming, "interactions", item["id"], previous, authorized_update):
+                merged_interactions[item["id"]] = authorized_update
     merged["interactions"] = list(merged_interactions.values())
 
     old_meetings = {m["id"]: m for m in old.get("meetings", [])}
     merged_meetings = {m["id"]: m for m in old.get("meetings", [])}
     for item in incoming.get("meetings", []):
-        if item.get("clubId") not in club_ids:
-            raise ValueError("Unknown club")
+        if item.get("clubId") not in allowed:
+            raise ValueError("You do not have access to this company. Refresh the CME directory.")
         previous = old_meetings.get(item["id"])
+        if previous and previous.get("clubId") not in allowed:
+            raise ValueError("You do not have access to this meeting company")
         if previous is None:
             if item.get("owner") != actor:
                 raise ValueError("You can only create meetings for yourself")
@@ -347,10 +535,20 @@ def validate_and_merge(old, incoming, actor):
                 raise ValueError("Meeting ownership cannot be transferred")
         if item.get("status") not in {"Planned", "Completed", "Canceled"}:
             raise ValueError("Invalid meeting status")
-        merged_meetings[item["id"]] = item
+        if previous is None or record_changed(incoming, "meetings", item["id"], previous, item):
+            merged_meetings[item["id"]] = item
     merged["meetings"] = list(merged_meetings.values())
     merged["activeUser"] = actor
     return merged
+
+def recorded_meeting_time(workspace, actor):
+    organizations = {club["id"]: club["name"] for club in workspace.get("clubs", [])}
+    allowed = allowed_company_ids(workspace, actor)
+    return [{"id": item["id"], "date": item["date"], "organization": organizations.get(item["clubId"], "Unknown organization"),
+             "minutes": item["meetingMinutes"]}
+            for item in workspace.get("interactions", [])
+            if item.get("owner") == actor and item.get("meetingMinutes") and item.get("clubId") in allowed]
+
 
 def time_expense_records(actor, data=None):
     with connect() as conn:
@@ -368,15 +566,14 @@ def time_expense_records(actor, data=None):
         if actor not in users:
             raise ValueError("Workspace account is unavailable")
         role = users[actor]["role"]
-        admin = role == "Admin"
         conn.row_factory = sqlite3.Row
         if data is None:
-            scope, params = ("status != 'Draft'", ()) if role != "User" else ("owner = ?", (actor,))
+            scope, params = ("1=1", ()) if role != "User" else ("owner = ?", (actor,))
             rows = conn.execute(f"SELECT * FROM time_expenses WHERE {scope} ORDER BY entry_date DESC, id", params)
-            return [{**dict(item), "detail": json.loads(item["detail"]), "advisor": users.get(item["owner"], {}).get("name", item["owner"])} for item in rows]
+            return [{**dict(item), "status": "Saved", "note": "", "detail": json.loads(item["detail"]), "advisor": users.get(item["owner"], {}).get("name", item["owner"])} for item in rows]
 
-        if role == "Sub-admin":
-            raise ValueError("Only Admin can approve or return submissions")
+        if role != "User":
+            raise ValueError("Only advisors can save their own timesheets and expenses")
         action = data.get("action")
         entry_id = data.get("id")
         current = conn.execute("SELECT * FROM time_expenses WHERE id = ?", (entry_id,)).fetchone() if entry_id else None
@@ -384,38 +581,118 @@ def time_expense_records(actor, data=None):
             raise ValueError("Entry no longer exists")
         if current and data.get("revision") != current["revision"]:
             raise ValueError("This entry changed. Reload the list and try again.")
-        if admin:
-            if action not in {"approve", "return"} or not current or current["status"] != "Submitted":
-                raise ValueError("Only submitted entries can be reviewed")
-            note = time_expense_text(data, "note", "Return note", 1000) if action == "return" else ""
-            status = "Approved" if action == "approve" else "Returned"
-            conn.execute("UPDATE time_expenses SET status=?, note=?, revision=revision+1 WHERE id=?", (status, note, entry_id))
-            return
-
-        if action not in {"draft", "submit"} or (current and (current["owner"] != actor or current["status"] not in {"Draft", "Returned"})):
-            raise ValueError("Only your drafts and returned entries can be edited")
+        if action not in {"save", "draft", "submit"} or (current and current["owner"] != actor):
+            raise ValueError("Only your own timesheets and expenses can be edited")
         kind = data.get("kind")
         if kind not in {"time", "travel"} or (current and kind != current["kind"]):
             raise ValueError("Invalid entry type")
-        entry_date = calendar_date.fromisoformat(time_expense_text(data, "date", "Date", 10)).isoformat()
+        entry_date = calendar_date.fromisoformat(time_expense_text(data, "date", "From date" if kind == "time" else "Date", 10)).isoformat()
         if kind == "time":
-            detail = {"deliverables": time_expense_text(data, "deliverables", "Deliverables", 2000),
-                      "hours": time_expense_number(data, "hours", "Duration", 24)}
+            end_date = calendar_date.fromisoformat(time_expense_text(data, "toDate", "To date", 10)).isoformat() if "toDate" in data else entry_date
+            days = (calendar_date.fromisoformat(end_date) - calendar_date.fromisoformat(entry_date)).days + 1
+            if days < 1:
+                raise ValueError("To date must be on or after From date")
+            existing = conn.execute(
+                "SELECT id, entry_date, detail FROM time_expenses WHERE owner=? AND kind='time' AND entry_date<=?",
+                (actor, end_date),
+            )
+            for entry in existing:
+                if entry["id"] != entry_id and json.loads(entry["detail"]).get("toDate", entry["entry_date"]) >= entry_date:
+                    raise ValueError("This date range overlaps an existing timesheet. Edit that entry or choose a different range.")
+            workspace = json.loads(row[0])
+            meetings = [meeting for meeting in recorded_meeting_time(workspace, actor)
+                        if entry_date <= meeting["date"] <= end_date]
+            meeting_minutes = sum(meeting["minutes"] for meeting in meetings)
+            manual = data.get("hours") or "0"
+            manual = "0" if manual in ("0", "0.0", "0.00") else time_expense_number(data, "hours", "Other work hours", days * 24)
+            deliverables = data.get("deliverables", "")
+            if float(manual) > 0:
+                deliverables = time_expense_text(data, "deliverables", "Other work description", 2000)
+            if not isinstance(deliverables, str) or len(deliverables) > 2000:
+                raise ValueError("Enter a valid work description")
+            total = float(manual) + meeting_minutes / 60
+            if not 0 < total <= days * 24:
+                raise ValueError("Enter a positive total within the hours available in this date range")
+            detail = {"deliverables": deliverables.strip(), "hours": f"{total:.2f}",
+                      "manualHours": manual, "meetingMinutes": meeting_minutes, "meetings": meetings, "toDate": end_date}
+            contract = workspace.get("contracts", {}).get(actor, {})
+            # Keep the rate captured when the entry was first saved, including on edits.
+            previous_detail = json.loads(current["detail"]) if current else {}
+            detail["billingRate"] = previous_detail.get("billingRate", contract.get("hourlyRate"))
+            if detail["billingRate"] is not None:
+                rate = Decimal(str(detail["billingRate"]))
+                detail["amount"] = str((Decimal(detail["hours"]) * rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
         else:
-            detail = {"origin": time_expense_text(data, "origin", "Travel from", 250),
-                      "destination": time_expense_text(data, "destination", "Travel to", 250),
-                      "reason": time_expense_text(data, "reason", "Reason for travel", 2000),
+            category = data.get("category", "Travel")
+            if category not in ("Travel", "Food", "Other"):
+                raise ValueError("Select an expense category")
+            detail = {"category": category, "reason": time_expense_text(data, "reason", "Expense description", 2000),
                       "cost": time_expense_number(data, "cost", "Total cost", 999999999)}
-        status = "Submitted" if action == "submit" else current["status"] if current else "Draft"
+            if category == "Travel":
+                detail["origin"] = time_expense_text(data, "origin", "Travel from", 250)
+                detail["destination"] = time_expense_text(data, "destination", "Travel to", 250)
+            elif category == "Other":
+                detail["otherCategory"] = time_expense_text(data, "otherCategory", "Expense category", 120)
+        status = "Saved"
         try:
             if current:
-                conn.execute("UPDATE time_expenses SET entry_date=?, status=?, detail=?, revision=revision+1 WHERE id=?",
+                conn.execute("UPDATE time_expenses SET entry_date=?, status=?, detail=?, note='', revision=revision+1 WHERE id=?",
                              (entry_date, status, json.dumps(detail), entry_id))
             else:
                 conn.execute("INSERT INTO time_expenses(id, owner, kind, entry_date, status, detail) VALUES(?,?,?,?,?,?)",
                              (secrets.token_hex(16), actor, kind, entry_date, status, json.dumps(detail)))
         except sqlite3.IntegrityError as exc:
             raise ValueError("You already have a timesheet for this date. Open that entry to edit it.") from exc
+
+
+def timesheet_allowances(workspace, actor, entries):
+    users = workspace.get("users", [])
+    role = next((u["role"] for u in users if u["id"] == actor), "User")
+    owners = [u["id"] for u in users if u["role"] == "User" and (role != "User" or u["id"] == actor)]
+    current_month = calendar_date.today().isoformat()[:7]
+    balances = []
+    for owner in owners:
+        contract = workspace.get("contracts", {}).get(owner, {})
+        usage = defaultdict(lambda: [Decimal(0), Decimal(0)])
+        for entry in entries:
+            if entry["kind"] != "time" or entry["owner"] != owner:
+                continue
+            detail = entry["detail"]
+            start = calendar_date.fromisoformat(entry["entry_date"])
+            end = calendar_date.fromisoformat(detail.get("toDate", entry["entry_date"]))
+            days = (end - start).days + 1
+            manual = Decimal(str(detail.get("manualHours", detail["hours"])))
+            allocations = defaultdict(Decimal)
+            cursor = start
+            while cursor <= end:
+                next_month = (cursor.replace(day=28) + timedelta(days=4)).replace(day=1) if cursor.year < 9999 or cursor.month < 12 else calendar_date.max
+                last = min(end, next_month - timedelta(days=1)) if next_month != calendar_date.max else end
+                allocations[cursor.isoformat()[:7]] += manual * ((last - cursor).days + 1) / days
+                if last == end:
+                    break
+                cursor = last + timedelta(days=1)
+            for meeting in detail.get("meetings", []):
+                allocations[meeting.get("date", entry["entry_date"])[:7]] += Decimal(str(meeting["minutes"])) / 60
+            # Match the saved total exactly, even when minutes round to hundredths of an hour.
+            if allocations:
+                allocations[end.isoformat()[:7]] += Decimal(str(detail["hours"])) - sum(allocations.values())
+            captured_rate = detail.get("billingRate")
+            rate = Decimal(str(captured_rate if captured_rate is not None else contract.get("hourlyRate") or 0))
+            for month, hours in allocations.items():
+                usage[month][0] += hours
+                usage[month][1] += hours * rate
+        for month in sorted(set(usage) | {current_month}):
+            first_month = str(contract.get("sowStart", ""))[:7] == month
+            cap = Decimal(str(contract.get("firstMonthCap" if first_month else "monthlyCap", contract.get("hoursCap", 0)) or 0))
+            rate = Decimal(str(contract.get("hourlyRate") or 0))
+            hours, amount = usage[month]
+            money = lambda value: str(value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+            balances.append({"owner": owner, "month": month, "configured": bool(contract),
+                             "hourlyRate": money(rate), "hoursCap": money(cap),
+                             "hoursUsed": money(hours), "hoursRemaining": money(cap - hours),
+                             "budget": money(cap * rate), "amountUsed": money(amount),
+                             "amountRemaining": money(cap * rate - amount)})
+    return balances
 
 
 def time_expense_text(data, field, label, limit):
@@ -432,93 +709,8 @@ def time_expense_number(data, field, label, maximum):
     return value
 
 
-# Initial development notes transcribed from the supplied tracker.
-ROADMAP_STARTERS = {
-    "Collections Accelerator": ("P1", "Demo", "Daniil", "Karan Sood's team",
-        "Configure the servicing demo for the Rams.", "Discuss funding for a dedicated team and sandbox.", "Los Angeles Rams"),
-    "Ticket Sales Accelerator": ("P2", "Demo", "Vibhor / Ashutosh", "IMU",
-        "The initial framework is ready.", "Create the development plan.", ""),
-    "Marketing in a Box": ("P3", "MVP", "Ashutosh's team", "Ashutosh's team",
-        "The core features are in place. Closed-loop measurement is still in progress.", "Complete measurement and prepare for the first client rollout.", ""),
-    "Finance in a Box": ("P4", "Demo", "Kalpesh", "",
-        "The demo is ready. Integration is underway and FP&A is in development.", "Work with Rob on prospect discussions.", ""),
-    "Search & Retrieval": ("P5", "MVP", "Deepak", "Robin's team",
-        "Implementation is underway in the AVFC environment.", "Plan the rollout at scale and define the inputs and visuals.", "Aston Villa FC (AVFC)"),
-    "Smart Stadium": ("P6", "Deck", "Don Whitt", "",
-        "The initial point of view is ready.", "Prepare the proposal deck.", ""),
-}
-ROADMAP_CAPABILITIES = tuple(ROADMAP_STARTERS)
-
-
-def roadmap_starter(name):
-    priority, stage, owner, team, summary, next_steps, proposed = ROADMAP_STARTERS[name]
-    return {"priority": priority, "stage": stage, "owner": owner, "team": team,
-            "proposedAnchorClients": proposed,
-            "proposedAdvisors": "Rob" if name == "Finance in a Box" else "",
-            "updates": [{"stage": stage, "summary": summary, "nextSteps": next_steps,
-                         "author": "Tracker reference"}]}
-
-
-ROADMAP_STAGES = ("Deck", "Demo", "MVP", "Product")
-
-
-def roadmap_records(actor, data=None):
-    with connect() as conn:
-        if data is not None:
-            conn.execute("BEGIN IMMEDIATE")
-        row = conn.execute("SELECT payload FROM app_state WHERE id=1").fetchone()
-        workspace = json.loads(row[0]) if row else {}
-        users = {user["id"]: user for user in workspace.get("users", [])}
-        role = users.get(actor, {}).get("role")
-        if role not in {"Admin", "Sub-admin"} or (data is not None and role != "Sub-admin"):
-            raise PermissionError("Only Sub-admin can update the roadmap" if data is not None else "Roadmap access is restricted to staff")
-        conn.execute("CREATE TABLE IF NOT EXISTS roadmap (capability TEXT PRIMARY KEY, payload TEXT NOT NULL)")
-        records = {name: json.loads(payload) for name, payload in conn.execute("SELECT capability, payload FROM roadmap")}
-        if data is None:
-            return [{"name": name, **records.get(name, roadmap_starter(name))} for name in ROADMAP_CAPABILITIES]
-        name = data.get("name")
-        if name not in ROADMAP_CAPABILITIES:
-            raise ValueError("Unknown capability")
-        previous = records.get(name, roadmap_starter(name))
-        if data.get("revision") != previous.get("revision", 0):
-            raise ValueError("This roadmap changed. Reload it and try again.")
-
-        def field(key, limit=300):
-            value = data.get(key, "")
-            if not isinstance(value, str) or len(value.strip()) > limit:
-                raise ValueError(f"Invalid {key}")
-            return value.strip()
-
-        priority = field("priority")
-        if priority and not re.fullmatch(r"P[1-9][0-9]?", priority):
-            raise ValueError("Use a priority such as P1 or P2")
-        stage = field("stage")
-        if stage not in ROADMAP_STAGES:
-            raise ValueError("Select a development stage")
-        clients = field("anchorClients", 2000)
-        updates = previous.get("updates", [])
-        summary = field("summary", 4000)
-        next_steps = field("nextSteps", 2000)
-        due = field("nextStepsDue", 10)
-        if bool(next_steps) != bool(due):
-            raise ValueError("Enter both the next steps and their deadline")
-        if due:
-            due = calendar_date.fromisoformat(due).isoformat()
-        if summary:
-            date = calendar_date.fromisoformat(field("date")).isoformat()
-            updates = [{"date": date, "stage": stage, "summary": summary,
-                                 "blockers": field("blockers", 2000), "nextSteps": next_steps, "nextStepsDue": due,
-                                 "author": users[actor]["name"]}, *updates]
-            updates.sort(key=lambda update: update.get("date", ""), reverse=True)
-        elif any(field(key, 2000) for key in ("blockers", "nextSteps")):
-            raise ValueError("Add a development update before recording blockers or next steps")
-        record = {"priority": priority, "stage": stage, "owner": field("owner"), "team": field("team"),
-                  "advisors": field("advisors", 1000), "anchorClients": clients,
-                  "proposedAnchorClients": field("proposedAnchorClients", 2000),
-                  "proposedAdvisors": field("proposedAdvisors", 1000),
-                  "updates": updates, "revision": previous.get("revision", 0) + 1}
-        conn.execute("INSERT INTO roadmap VALUES(?,?) ON CONFLICT(capability) DO UPDATE SET payload=excluded.payload",
-                     (name, json.dumps(record)))
+CAPABILITIES = ("Collections Accelerator", "Ticket Sales Accelerator", "Marketing in a Box",
+                "Finance in a Box", "Search & Retrieval", "Smart Stadium")
 
 
 def add_subadmin(username, name, password):
@@ -554,7 +746,7 @@ class Handler(SimpleHTTPRequestHandler):
         super().__init__(*args, directory=str(ROOT), **kwargs)
 
     def log_message(self, fmt, *args):
-        print("[clubhouse] " + fmt % args)
+        print("[advisor-activity-tracker] " + fmt % args)
 
     def end_headers(self):
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -601,28 +793,41 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_json(401, {"error": "Sign in to continue"})
         try:
             result = time_expense_records(actor, self.read_json(12000) if write else None)
-            return self.send_json(200, {"ok": True} if write else {"entries": result})
+            if write:
+                return self.send_json(200, {"ok": True})
+            state = get_state() or {}
+            return self.send_json(200, {"entries": result, "meetingTime": recorded_meeting_time(state, actor), "allowances": timesheet_allowances(state, actor, result)})
         except RequestTooLarge as exc:
             return self.send_json(413, {"error": str(exc)})
         except (ValueError, TypeError, sqlite3.InterfaceError, sqlite3.ProgrammingError) as exc:
             return self.send_json(400, {"error": str(exc)})
 
-    def handle_roadmap(self, write=False):
+    def handle_add_company(self):
         actor = session_actor(self)
         if not actor:
             return self.send_json(401, {"error": "Sign in to continue"})
         try:
-            result = roadmap_records(actor, self.read_json(20000) if write else None)
-            return self.send_json(200, {"ok": True} if write else {"products": result})
-        except PermissionError as exc:
+            result = add_company(actor, self.read_json(5000))
+            return self.send_json(200, {"ok": True, **result})
+        except RequestTooLarge as exc:
+            return self.send_json(413, {"error": str(exc)})
+        except (ValueError, TypeError) as exc:
             return self.send_json(403, {"error": str(exc)})
-        except (ValueError, TypeError, RequestTooLarge) as exc:
-            return self.send_json(400, {"error": str(exc)})
+
+    def handle_company_access(self):
+        actor = session_actor(self)
+        if not actor:
+            return self.send_json(401, {"error": "Sign in to continue"})
+        try:
+            state = update_company_access(actor, self.read_json(40000))
+            return self.send_json(200, {"ok": True, "state": state})
+        except RequestTooLarge as exc:
+            return self.send_json(413, {"error": str(exc)})
+        except (ValueError, TypeError) as exc:
+            return self.send_json(403, {"error": str(exc)})
 
     def do_GET(self):
         url = urlparse(self.path)
-        if url.path == "/api/roadmap":
-            return self.handle_roadmap()
         if url.path == "/api/time-expenses":
             return self.handle_time_expenses()
         if url.path == "/healthz":
@@ -650,8 +855,10 @@ class Handler(SimpleHTTPRequestHandler):
         path = urlparse(self.path).path
         if not self.same_origin_request():
             return self.send_json(403, {"error": "Cross-origin request rejected"})
-        if path == "/api/roadmap":
-            return self.handle_roadmap(write=True)
+        if path == "/api/companies":
+            return self.handle_add_company()
+        if path == "/api/company-access":
+            return self.handle_company_access()
         if path == "/api/time-expenses":
             return self.handle_time_expenses(write=True)
         if path == "/api/login":
@@ -691,8 +898,8 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.send_json(401, {"error": "Sign in to continue"})
             try:
                 data = self.read_json(8_000)
-                update_followup_status(data.get("interactionId"), data.get("followupId"), data.get("status"), actor)
-                return self.send_json(200, {"ok": True})
+                version = update_followup_status(data.get("interactionId"), data.get("followupId"), data.get("status"), actor)
+                return self.send_json(200, {"ok": True, "interactionVersion": version})
             except RequestTooLarge as exc:
                 return self.send_json(413, {"error": str(exc)})
             except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
@@ -707,14 +914,17 @@ class Handler(SimpleHTTPRequestHandler):
             incoming = data["state"]
             if not isinstance(incoming, dict):
                 raise ValueError("Workspace state is required")
-            save_state_transaction(incoming, actor)
-            return self.send_json(200, {"ok": True})
+            saved = save_state_transaction(incoming, actor)
+            return self.send_json(200, {"ok": True, "state": visible_state(saved, actor)})
         except RequestTooLarge as exc:
             return self.send_json(413, {"error": str(exc)})
+        except StateConflict as exc:
+            return self.send_json(409, {"error": str(exc)})
         except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
             return self.send_json(403, {"error": str(exc)})
 
 if __name__ == "__main__":
+    restore_workspace_snapshot()
     import sys
     if sys.argv[1:] == ["add-subadmin"]:
         from getpass import getpass
@@ -732,5 +942,5 @@ if __name__ == "__main__":
     host = os.environ.get("CLUBHOUSE_HOST", "127.0.0.1")
     port = int(os.environ.get("CLUBHOUSE_PORT", "4173"))
     os.umask(0o077)
-    print(f"Clubhouse listening at http://{host}:{port}")
+    print(f"Advisor Activity Tracker listening at http://{host}:{port}")
     ThreadingHTTPServer((host, port), Handler).serve_forever()
